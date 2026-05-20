@@ -1,0 +1,4 @@
+suite: induction
+prompts:
+  - prompt: "A B A"
+    target_text: " B"

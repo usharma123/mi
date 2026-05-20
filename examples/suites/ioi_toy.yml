@@ -1,0 +1,4 @@
+suite: ioi_toy
+prompts:
+  - prompt: "When John and Mary went to the store, John gave a drink to"
+    target_text: " Mary"

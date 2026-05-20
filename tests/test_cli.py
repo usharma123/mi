@@ -499,3 +499,17 @@ def test_diff_command_writes_artifacts(tmp_path, monkeypatch) -> None:
     assert (out / "diff.json").exists()
     assert (out / "diff.md").exists()
     assert (out / "diff.html").exists()
+
+
+def test_test_command_loads_claims_and_returns_untested(tmp_path) -> None:
+    runner = CliRunner()
+    claim = tmp_path / "claim.yml"
+    claim.write_text(
+        "id: test_claim\ntext: Test claim.\ntarget:\n  layer: 0\n  position: 0\n  stream: resid_post\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["test", str(claim), "--model", "fake"])
+
+    assert result.exit_code == 3
+    assert "test_claim -> untested" in result.output

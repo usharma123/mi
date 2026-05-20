@@ -23,6 +23,7 @@ from mi.core.schema import (
     ValidationArtifact,
 )
 from mi.core.graph_builder import build_meir_graph, graph_to_graphml
+from mi.core.regression import claim_paths_from_globs, regression_exit_code
 from mi.core.validation import evaluate_claim, find_candidate, load_claim_specs
 from mi.methods.features import build_raw_activation_features
 from mi.methods.localization import parse_controls
@@ -444,6 +445,50 @@ def validate_command(
     store.write_text("validate.md", render_validation_markdown(validation))
     store.write_text("validate.html", render_html("Claim Validation Report", render_validation_markdown(validation)))
     typer.echo(f"Wrote validation artifacts to {store.root}")
+
+
+@app.command("test")
+def test_command(
+    claim_patterns: Annotated[
+        list[str],
+        typer.Argument(help="Claim file glob(s), for example examples/claims/*.yml."),
+    ],
+    model: Annotated[str, typer.Option("--model", help="Model label for test output.")] = "gpt2-small",
+) -> None:
+    paths = claim_paths_from_globs(tuple(claim_patterns))
+    if not paths:
+        typer.secho("No claim files matched.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=3)
+    worst_code = 0
+    for path in paths:
+        try:
+            claims = load_claim_specs(path)
+        except Exception as exc:
+            typer.secho(f"{path}: failed to load claims: {exc}", fg=typer.colors.RED, err=True)
+            worst_code = max(worst_code, 3)
+            continue
+        validation = ValidationArtifact(
+            id=f"test-{path.stem}",
+            backend="offline",
+            claims=claims,
+            results=[
+                {
+                    "claim_id": claim.id,
+                    "verdict": "untested",
+                    "tests": [],
+                    "evidence_ids": [],
+                }
+                for claim in claims
+            ],
+            warnings=[
+                f"Offline regression test loaded claim specs for {model}; run `mi validate` for causal verdicts."
+            ],
+        )
+        code = regression_exit_code(validation)
+        worst_code = max(worst_code, code)
+        for result in validation.results:
+            typer.echo(f"{path}: {result.claim_id} -> {result.verdict}")
+    raise typer.Exit(code=worst_code)
 
 
 @app.command("fuzz")

@@ -37,6 +37,7 @@ mi features runs/france --dictionary saelens --top-k 50
 mi graph runs/france --method meir --prune-threshold 0.03
 mi graph runs/france --backend circuit-tracer --import circuit_tracer_graph.json
 mi diff --run-a runs/model-a --run-b runs/model-b --out runs/diff
+mi test "examples/claims/*.yml" --model gpt2-small
 mi localize runs/france --methods zero-ablation --top-k 20
 mi localize runs/france \
   --corrupt-prompt "The capital of Germany is" \
@@ -91,6 +92,8 @@ Markdown reports are accompanied by static local HTML reports such as `report.ht
 The implemented v0.1/v0.2 path is TransformerLens because it exposes internal activations and hook-based interventions. Ollama-style generation APIs are not enough for causal tracing by themselves: `mi` needs residual streams, component outputs, and intervention hooks. Models served by Ollama can become useful when their underlying weights are loaded through a PyTorch/Hugging Face/NNsight-style backend that exposes those tensors.
 
 Use `mi backends` to inspect which methods each backend supports. Unsupported backend-method combinations fail explicitly instead of producing partial evidence.
+
+`mi test` is CI-friendly: exit code `0` means all supplied claims are supported, `2` means weak, `3` means untested or no claims, and `4` means contradicted. In v1.0 it provides offline claim-spec regression checks; run `mi validate` to produce causal verdicts.
 
 ## Development
 

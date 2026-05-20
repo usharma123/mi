@@ -1,0 +1,4 @@
+suite: factual_recall
+prompts:
+  - prompt: "The capital city of France is called"
+    target_text: " Paris"
