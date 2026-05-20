@@ -8,6 +8,7 @@ from mi.report.json_report import (
 )
 from mi.report.markdown import (
     render_features_markdown,
+    render_graph_markdown,
     render_localization_markdown,
     render_markdown,
     render_validation_markdown,
@@ -17,6 +18,7 @@ __all__ = [
     "render_json_report",
     "render_feature_json_report",
     "render_features_markdown",
+    "render_graph_markdown",
     "render_localization_json_report",
     "render_localization_markdown",
     "render_markdown",

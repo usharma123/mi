@@ -12,16 +12,19 @@ from mi.core.artifact_store import ArtifactStore, default_run_dir
 from mi.core.schema import (
     BehaviorSpec,
     FeatureArtifact,
+    GraphArtifact,
     LocalizationArtifact,
     RunManifest,
     TraceArtifact,
     ValidationArtifact,
 )
+from mi.core.graph_builder import build_meir_graph, graph_to_graphml
 from mi.core.validation import evaluate_claim, find_candidate, load_claim_specs
 from mi.methods.features import build_raw_activation_features
 from mi.methods.localization import parse_controls
 from mi.report import (
     render_features_markdown,
+    render_graph_markdown,
     render_json_report,
     render_localization_markdown,
     render_markdown,
@@ -484,6 +487,64 @@ def features_command(
     store.write_text("feature_evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
     store.write_text("features.md", render_features_markdown(feature_artifact))
     typer.echo(f"Wrote feature artifacts to {store.root}")
+
+
+@app.command("graph")
+def graph_command(
+    run_path: Annotated[Path, typer.Argument(help="Run directory containing trace.json.")],
+    method: Annotated[
+        str,
+        typer.Option("--method", help="Graph method: meir."),
+    ] = "meir",
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", help="Graph backend: meir or circuit-tracer."),
+    ] = None,
+    prune_threshold: Annotated[
+        float,
+        typer.Option("--prune-threshold", help="Drop edges/nodes below this absolute effect."),
+    ] = 0.0,
+) -> None:
+    store, trace = _load_trace(run_path)
+    selected = (backend or method).lower().replace("_", "-")
+    if selected == "circuit-tracer":
+        typer.secho(
+            "circuit-tracer graph import is planned for v0.6; use --method meir for v0.4.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if selected != "meir":
+        typer.secho(f"Unknown graph method/backend: {selected}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    localization = (
+        store.read_model("localization.json", LocalizationArtifact)
+        if store.path("localization.json").exists()
+        else None
+    )
+    features = (
+        store.read_model("features.json", FeatureArtifact)
+        if store.path("features.json").exists()
+        else None
+    )
+    graph = build_meir_graph(
+        run_id=f"{store.run_id}-graph",
+        trace=trace,
+        localization=localization,
+        features=features,
+        prune_threshold=prune_threshold,
+    )
+    artifact_refs = {
+        "graph": "graph.json",
+        "graphml": "graph.graphml",
+        "report_md": "graph.md",
+    }
+    graph = graph.model_copy(update={"artifact_refs": artifact_refs})
+    store.write_json("graph.json", graph)
+    store.write_text("graph.graphml", graph_to_graphml(graph))
+    store.write_text("graph.md", render_graph_markdown(graph))
+    typer.echo(f"Wrote graph artifacts to {store.root}")
 
 
 @app.command("report")

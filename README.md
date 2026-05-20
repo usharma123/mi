@@ -34,6 +34,7 @@ mi inspect runs/france --view logits
 mi inspect runs/france --view logit-lens
 mi inspect runs/france --view activations
 mi features runs/france --dictionary saelens --top-k 50
+mi graph runs/france --method meir --prune-threshold 0.03
 mi localize runs/france --methods zero-ablation --top-k 20
 mi localize runs/france \
   --corrupt-prompt "The capital of Germany is" \
@@ -76,6 +77,8 @@ runs/france/
   evidence.jsonl
   validate.md
 ```
+
+`mi graph` writes `graph.json`, `graph.graphml`, and `graph.md`.
 
 ## Backends
 

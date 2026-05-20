@@ -175,6 +175,18 @@ class FeatureArtifact(MIModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class GraphArtifact(MIModel):
+    id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    backend: str
+    behavior: BehaviorSpec
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class LocalizationArtifact(MIModel):
     id: str
     created_at: str = Field(default_factory=utc_now_iso)

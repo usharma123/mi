@@ -367,3 +367,30 @@ def test_features_command_writes_expected_artifacts(tmp_path, monkeypatch) -> No
     assert (run_path / "features.json").exists()
     assert (run_path / "feature_evidence.jsonl").exists()
     assert (run_path / "features.md").exists()
+
+
+def test_graph_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+
+    result = runner.invoke(app, ["graph", str(run_path), "--method", "meir"])
+
+    assert result.exit_code == 0, result.output
+    assert (run_path / "graph.json").exists()
+    assert (run_path / "graph.graphml").exists()
+    assert (run_path / "graph.md").exists()

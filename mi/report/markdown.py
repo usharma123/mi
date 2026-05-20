@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mi.core.schema import FeatureArtifact, LocalizationArtifact, TraceArtifact, ValidationArtifact
+from mi.core.schema import FeatureArtifact, GraphArtifact, LocalizationArtifact, TraceArtifact, ValidationArtifact
 from mi.methods.direct_logit_attribution import top_direct_attributions
 
 
@@ -295,4 +295,28 @@ def render_features_markdown(features: FeatureArtifact) -> str:
         lines.extend(["", "## Warnings", ""])
         for warning in features.warnings:
             lines.append(f"- {warning}")
+    return "\n".join(lines) + "\n"
+
+
+def render_graph_markdown(graph: GraphArtifact) -> str:
+    lines = [
+        "# Evidence Graph Report",
+        "",
+        f"- Model: `{graph.behavior.model}`",
+        f"- Nodes: `{len(graph.nodes)}`",
+        f"- Edges: `{len(graph.edges)}`",
+        "",
+        "## Edges",
+        "",
+        "| Source | Target | Weight | Method |",
+        "|---|---|---:|---|",
+    ]
+    for edge in graph.edges[:100]:
+        lines.append(
+            f"| `{_cell(edge.get('source'))}` | `{_cell(edge.get('target'))}` | "
+            f"{_float(edge.get('weight'))} | {_cell(edge.get('method'))} |"
+        )
+    if len(graph.edges) > 100:
+        lines.append(f"| ... | {len(graph.edges) - 100} more edges |  |  |")
+    lines.extend(["", "## Caveats", "", "- Graph edges carry evidence metadata; they are not complete circuit proofs."])
     return "\n".join(lines) + "\n"
