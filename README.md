@@ -84,7 +84,7 @@ runs/france/
   validate.md
 ```
 
-`mi graph` writes `graph.json`, `graph.graphml`, and `graph.md`.
+Markdown reports are accompanied by static local HTML reports such as `report.html`, `localize.html`, `features.html`, `graph.html`, `validate.html`, and `diff.html`.
 
 ## Backends
 

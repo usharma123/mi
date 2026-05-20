@@ -14,6 +14,7 @@ from mi.report.markdown import (
     render_markdown,
     render_validation_markdown,
 )
+from mi.report.html import render_html
 
 __all__ = [
     "render_json_report",
@@ -21,6 +22,7 @@ __all__ = [
     "render_features_markdown",
     "render_diff_markdown",
     "render_graph_markdown",
+    "render_html",
     "render_localization_json_report",
     "render_localization_markdown",
     "render_markdown",

@@ -138,6 +138,7 @@ def test_trace_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
     assert (run_path / "metrics.json").exists()
     assert (run_path / "activations.npz").exists()
     assert (run_path / "report.md").exists()
+    assert (run_path / "report.html").exists()
 
 
 def test_inspect_and_report_commands(tmp_path, monkeypatch) -> None:
@@ -214,6 +215,7 @@ def test_localize_command_writes_expected_artifacts(tmp_path, monkeypatch) -> No
     assert (run_path / "candidates.json").exists()
     assert (run_path / "evidence.jsonl").exists()
     assert (run_path / "localize.md").exists()
+    assert (run_path / "localize.html").exists()
 
 
 def test_validate_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
@@ -272,6 +274,7 @@ tests:
     assert (run_path / "scores.json").exists()
     assert (run_path / "evidence.jsonl").exists()
     assert (run_path / "validate.md").exists()
+    assert (run_path / "validate.html").exists()
 
 
 def test_localize_rejects_invalid_controls(tmp_path, monkeypatch) -> None:
@@ -368,6 +371,7 @@ def test_features_command_writes_expected_artifacts(tmp_path, monkeypatch) -> No
     assert (run_path / "features.json").exists()
     assert (run_path / "feature_evidence.jsonl").exists()
     assert (run_path / "features.md").exists()
+    assert (run_path / "features.html").exists()
 
 
 def test_graph_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
@@ -395,6 +399,7 @@ def test_graph_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
     assert (run_path / "graph.json").exists()
     assert (run_path / "graph.graphml").exists()
     assert (run_path / "graph.md").exists()
+    assert (run_path / "graph.html").exists()
 
 
 def test_graph_circuit_tracer_import(tmp_path, monkeypatch) -> None:
@@ -493,3 +498,4 @@ def test_diff_command_writes_artifacts(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     assert (out / "diff.json").exists()
     assert (out / "diff.md").exists()
+    assert (out / "diff.html").exists()

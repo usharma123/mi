@@ -30,6 +30,7 @@ from mi.report import (
     render_features_markdown,
     render_diff_markdown,
     render_graph_markdown,
+    render_html,
     render_json_report,
     render_localization_markdown,
     render_markdown,
@@ -108,6 +109,7 @@ def trace_command(
         "metrics": "metrics.json",
         "activations": "activations.npz",
         "report_md": "report.md",
+        "report_html": "report.html",
     }
     trace = trace.model_copy(update={"artifact_refs": artifact_refs})
 
@@ -132,6 +134,7 @@ def trace_command(
         },
     )
     store.write_text("report.md", render_markdown(trace))
+    store.write_text("report.html", render_html("Mechanistic Trace Report", render_markdown(trace)))
     store.write_manifest(
         RunManifest(
             run_id=trace.id,
@@ -292,6 +295,7 @@ def localize_command(
         "candidates": "candidates.json",
         "evidence": "evidence.jsonl",
         "report_md": "localize.md",
+        "report_html": "localize.html",
     }
     localization = localization.model_copy(update={"artifact_refs": artifact_refs})
     store.write_json("localization.json", localization)
@@ -304,6 +308,7 @@ def localize_command(
     )
     store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
     store.write_text("localize.md", render_localization_markdown(localization))
+    store.write_text("localize.html", render_html("Causal Localization Report", render_localization_markdown(localization)))
     typer.echo(f"Wrote localization artifacts to {store.root}")
 
 
@@ -413,6 +418,7 @@ def validate_command(
         "scores": "scores.json",
         "evidence": "evidence.jsonl",
         "report_md": "validate.md",
+        "report_html": "validate.html",
     }
     validation = ValidationArtifact(
         id=f"{store.run_id}-validate",
@@ -436,6 +442,7 @@ def validate_command(
     )
     store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
     store.write_text("validate.md", render_validation_markdown(validation))
+    store.write_text("validate.html", render_html("Claim Validation Report", render_validation_markdown(validation)))
     typer.echo(f"Wrote validation artifacts to {store.root}")
 
 
@@ -520,6 +527,7 @@ def features_command(
         "features": "features.json",
         "evidence": "feature_evidence.jsonl",
         "report_md": "features.md",
+        "report_html": "features.html",
     }
     feature_artifact = feature_artifact.model_copy(update={"artifact_refs": artifact_refs})
     store.write_json("features.json", feature_artifact)
@@ -528,6 +536,7 @@ def features_command(
     )
     store.write_text("feature_evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
     store.write_text("features.md", render_features_markdown(feature_artifact))
+    store.write_text("features.html", render_html("Feature Report", render_features_markdown(feature_artifact)))
     typer.echo(f"Wrote feature artifacts to {store.root}")
 
 
@@ -591,11 +600,13 @@ def graph_command(
         "graph": "graph.json",
         "graphml": "graph.graphml",
         "report_md": "graph.md",
+        "report_html": "graph.html",
     }
     graph = graph.model_copy(update={"artifact_refs": artifact_refs})
     store.write_json("graph.json", graph)
     store.write_text("graph.graphml", graph_to_graphml(graph))
     store.write_text("graph.md", render_graph_markdown(graph))
+    store.write_text("graph.html", render_html("Evidence Graph Report", render_graph_markdown(graph)))
     typer.echo(f"Wrote graph artifacts to {store.root}")
 
 
@@ -630,10 +641,11 @@ def diff_command(
     diff = diff_traces(store.run_id, trace_a, trace_b)
     if suite is not None:
         diff.warnings.append(f"Suite metadata recorded: {suite}")
-    artifact_refs = {"diff": "diff.json", "report_md": "diff.md"}
+    artifact_refs = {"diff": "diff.json", "report_md": "diff.md", "report_html": "diff.html"}
     diff = diff.model_copy(update={"artifact_refs": artifact_refs})
     store.write_json("diff.json", diff)
     store.write_text("diff.md", render_diff_markdown(diff))
+    store.write_text("diff.html", render_html("Model Diff Report", render_diff_markdown(diff)))
     typer.echo(f"Wrote diff artifacts to {store.root}")
 
 
