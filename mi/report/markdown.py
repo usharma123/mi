@@ -214,11 +214,14 @@ def render_validation_markdown(validation: ValidationArtifact) -> str:
         "",
         "## Verdicts",
         "",
-        "| Claim | Verdict | Tests |",
-        "|---|---|---:|",
+        "| Claim | Verdict | Tests | Variant Pass Rate |",
+        "|---|---|---:|---:|",
     ]
     for result in validation.results:
-        lines.append(f"| `{result.claim_id}` | `{result.verdict}` | {len(result.tests)} |")
+        lines.append(
+            f"| `{result.claim_id}` | `{result.verdict}` | {len(result.tests)} | "
+            f"{_float(result.variant_pass_rate)} |"
+        )
 
     claim_by_id = {claim.id: claim for claim in validation.claims}
     for result in validation.results:
@@ -268,20 +271,25 @@ def render_features_markdown(features: FeatureArtifact) -> str:
         f"- Target text: `{features.behavior.target_text or ''}`",
         f"- Dictionary: `{features.dictionary_id}`",
         f"- Source: `{features.source}`",
+        f"- SAE release: `{features.sae_release or ''}`",
+        f"- SAE id: `{features.sae_id or ''}`",
+        f"- Hook: `{features.hook_name or ''}`",
         "",
         "## Top Features",
         "",
-        "| Rank | Feature | Layer | Activation | Label Metadata | Evidence |",
-        "|---:|---|---:|---:|---|---|",
+        "| Rank | Feature | Layer | Activation | Recon Error | Ablation | Steering | Label Metadata | Evidence |",
+        "|---:|---|---:|---:|---:|---:|---:|---|---|",
     ]
     for rank, item in enumerate(features.features, start=1):
         label = item.feature.label or ""
         lines.append(
             f"| {rank} | `{item.feature.feature_id}` | {item.feature.layer} | "
-            f"{_float(item.activation_value)} | {_cell(label)} | `{','.join(item.evidence_ids)}` |"
+            f"{_float(item.activation_value)} | {_float(item.dictionary_reconstruction_error)} | "
+            f"{_float(item.ablation_effect)} | {_float(item.steering_effect)} | "
+            f"{_cell(label)} | `{','.join(item.evidence_ids)}` |"
         )
     if not features.features:
-        lines.append("|  | No features found |  |  |  |  |")
+        lines.append("|  | No features found |  |  |  |  |  |  |  |")
     lines.extend(
         [
             "",

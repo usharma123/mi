@@ -10,6 +10,9 @@ behavior:
   prompt: "The capital city of France is called"
   target_text: " Paris"
 corrupt_prompt: "The capital city of Germany is called"
+min_variant_pass_rate: 0.7
+max_variant_failures: 1
+variant_position: final
 tests:
   - method: zero_ablation
     min_effect: 8.0

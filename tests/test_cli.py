@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import numpy as np
 from typer.testing import CliRunner
 
@@ -279,6 +280,64 @@ tests:
     assert (run_path / "validate.html").exists()
 
 
+def test_validate_command_reruns_variants(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    claims_path = tmp_path / "claim.yml"
+    variants_path = tmp_path / "variants.jsonl"
+    claims_path.write_text(
+        """
+id: hello_world
+text: Residual stream supports the world token.
+target:
+  layer: 0
+  position: 2
+  stream: resid_post
+min_variant_pass_rate: 1.0
+tests:
+  - method: zero_ablation
+    min_effect: 0.5
+""",
+        encoding="utf-8",
+    )
+    variants_path.write_text(
+        json.dumps({"id": "v1", "prompt": "Hello, there", "target_text": " world"}) + "\n",
+        encoding="utf-8",
+    )
+    runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "validate",
+            str(run_path),
+            "--claims",
+            str(claims_path),
+            "--variants",
+            str(variants_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    validation = json.loads((run_path / "validation.json").read_text(encoding="utf-8"))
+    assert validation["results"][0]["variant_pass_rate"] == 1.0
+    assert validation["results"][0]["verdict"] == "supported"
+
+
 def test_localize_rejects_invalid_controls(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
     runner = CliRunner()
@@ -511,7 +570,7 @@ def test_test_command_loads_claims_and_returns_untested(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["test", str(claim), "--model", "fake"])
+    result = runner.invoke(app, ["test", str(claim), "--model", "fake", "--no-artifacts"])
 
     assert result.exit_code == 3
     assert "test_claim -> untested" in result.output
@@ -543,10 +602,13 @@ def test_test_command_executes_claim_with_behavior(tmp_path, monkeypatch) -> Non
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["test", str(claim), "--device", "cpu"])
+    out = tmp_path / "test-run"
+    result = runner.invoke(app, ["test", str(claim), "--device", "cpu", "--out", str(out)])
 
     assert result.exit_code == 0, result.output
     assert "executable_claim -> supported" in result.output
+    assert (out / "validation.json").exists()
+    assert (out / "scores.json").exists()
 
 
 def test_test_command_enforces_run_validation_artifact(tmp_path) -> None:

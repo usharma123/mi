@@ -13,6 +13,7 @@ from mi.core.circuit_tracer import import_circuit_tracer_graph
 from mi.core.cts import score_validation
 from mi.core.diff import diff_traces
 from mi.core.fuzz import generate_variants, load_prompt_family, load_variants_jsonl, write_variants_jsonl
+from mi.core.neuronpedia import load_neuronpedia_metadata
 from mi.core.schema import (
     BehaviorSpec,
     FeatureArtifact,
@@ -24,8 +25,18 @@ from mi.core.schema import (
 )
 from mi.core.graph_builder import build_meir_graph, graph_to_graphml
 from mi.core.regression import claim_paths_from_globs, regression_exit_code, validation_for_claims
-from mi.core.validation import evaluate_claim, find_candidate, load_claim_specs
-from mi.methods.features import build_raw_activation_features
+from mi.core.validation import (
+    apply_variant_threshold,
+    evaluate_claim,
+    find_candidate,
+    find_variant_candidate,
+    load_claim_specs,
+)
+from mi.methods.features import (
+    build_raw_activation_features,
+    build_saelens_features,
+    resolve_saelens_config,
+)
 from mi.methods.localization import parse_controls
 from mi.report import (
     render_features_markdown,
@@ -331,6 +342,10 @@ def validate_command(
         Path | None,
         typer.Option("--variants", help="Optional variants JSONL file for robustness metadata."),
     ] = None,
+    min_variant_pass_rate: Annotated[
+        float | None,
+        typer.Option("--min-variant-pass-rate", min=0.0, max=1.0, help="Required prompt-family pass rate."),
+    ] = None,
     position: Annotated[
         str,
         typer.Option("--position", help="Position spec for rerun localization."),
@@ -410,6 +425,65 @@ def validate_command(
             resolved_tests,
             evidence_start=len(validation_evidence) + 1,
         )
+        if variants:
+            variant_passed = 0
+            variant_total = 0
+            variant_contradicted = False
+            for variant in variants:
+                variant_behavior = behavior.model_copy(
+                    update={
+                        "prompt": variant.prompt,
+                        "target_text": variant.target_text or behavior.target_text,
+                    }
+                )
+                variant_resolved = []
+                backend_key = (selected_backend, variant_behavior.model, device)
+                if backend_key not in backend_instances:
+                    try:
+                        backend_factory = get_backend(selected_backend)
+                        backend_instances[backend_key] = backend_factory(variant_behavior.model, device)
+                    except Exception as exc:
+                        typer.secho(f"validate failed: {exc}", fg=typer.colors.RED, err=True)
+                        raise typer.Exit(code=1) from exc
+                for test in claim_tests:
+                    try:
+                        rerun = backend_instances[backend_key].localize(
+                            variant_behavior,
+                            run_id=f"{store.run_id}-validate-{claim.id}-{variant.id}",
+                            corrupt_prompt=claim.corrupt_prompt or variant.metadata.get("corrupt_prompt"),
+                            methods={test.method},
+                            streams={claim.target.stream},
+                            controls=control_set,
+                            position=claim.variant_position,
+                            seed=seed,
+                            top_k=999,
+                        )
+                    except Exception as exc:
+                        typer.secho(f"validate failed: {exc}", fg=typer.colors.RED, err=True)
+                        raise typer.Exit(code=1) from exc
+                    warnings.extend(rerun.warnings)
+                    variant_resolved.append((test, find_variant_candidate(rerun, claim, test)))
+                variant_result, variant_evidence = evaluate_claim(
+                    claim,
+                    variant_resolved,
+                    evidence_start=len(validation_evidence) + len(evidence) + 1,
+                )
+                variant_total += 1
+                if variant_result.verdict == "supported":
+                    variant_passed += 1
+                if variant_result.verdict == "contradicted":
+                    variant_contradicted = True
+                evidence.extend(variant_evidence)
+            threshold_claim = claim
+            if min_variant_pass_rate is not None and claim.min_variant_pass_rate is None:
+                threshold_claim = claim.model_copy(update={"min_variant_pass_rate": min_variant_pass_rate})
+            result = apply_variant_threshold(
+                result,
+                claim=threshold_claim,
+                variant_passed=variant_passed,
+                variant_total=variant_total,
+                variant_contradicted=variant_contradicted,
+            )
         validation_results.append(result)
         validation_evidence.extend(evidence)
 
@@ -431,10 +505,6 @@ def validate_command(
         warnings=warnings,
     )
     scores = score_validation(validation)
-    if variants:
-        validation.warnings.append(
-            f"Loaded {len(variants)} prompt variants; full rerun pass-rate validation is scheduled for backend-specific suites."
-        )
     store.write_json("claims.json", [claim.model_dump(mode="json") for claim in claims])
     store.write_json("validation.json", validation)
     store.write_json("scores.json", scores)
@@ -480,6 +550,14 @@ def test_command(
         int,
         typer.Option("--top-k", min=1, help="Localization candidates to retain for executed tests."),
     ] = 100,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Directory for executed test artifacts."),
+    ] = None,
+    artifacts: Annotated[
+        bool,
+        typer.Option("--artifacts/--no-artifacts", help="Write artifacts for executed claim tests."),
+    ] = True,
     run_path: Annotated[
         Path | None,
         typer.Option("--run", help="Run directory containing validation.json to enforce."),
@@ -584,6 +662,28 @@ def test_command(
         evidence=evidence,
         warnings=warnings,
     )
+    if artifacts:
+        store = ArtifactStore.create(out or default_run_dir("test-" + "-".join(claim.id for claim in all_claims[:3])))
+        artifact_refs = {
+            "claims": "claims.json",
+            "validation": "validation.json",
+            "scores": "scores.json",
+            "evidence": "evidence.jsonl",
+            "report_md": "validate.md",
+            "report_html": "validate.html",
+        }
+        validation = validation.model_copy(
+            update={"id": f"{store.run_id}-test", "artifact_refs": artifact_refs}
+        )
+        scores = score_validation(validation)
+        store.write_json("claims.json", [claim.model_dump(mode="json") for claim in all_claims])
+        store.write_json("validation.json", validation)
+        store.write_json("scores.json", scores)
+        evidence_lines = "\n".join(item.model_dump_json() for item in validation.evidence)
+        store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
+        store.write_text("validate.md", render_validation_markdown(validation))
+        store.write_text("validate.html", render_html("Claim Test Report", render_validation_markdown(validation)))
+        typer.echo(f"Wrote test artifacts to {store.root}")
     for warning in warnings:
         typer.echo(f"warning: {warning}")
     raise typer.Exit(code=regression_exit_code(validation))
@@ -623,6 +723,38 @@ def features_command(
         str | None,
         typer.Option("--source", help="Optional metadata source such as neuronpedia."),
     ] = None,
+    sae_release: Annotated[
+        str | None,
+        typer.Option("--sae-release", help="SAELens release name for pretrained SAE loading."),
+    ] = None,
+    sae_id: Annotated[
+        str | None,
+        typer.Option("--sae-id", help="SAELens SAE id/path inside the release."),
+    ] = None,
+    metadata: Annotated[
+        str,
+        typer.Option("--metadata", help="Feature metadata source: none or neuronpedia."),
+    ] = "none",
+    metadata_cache: Annotated[
+        Path,
+        typer.Option("--metadata-cache", help="Directory for optional metadata cache."),
+    ] = Path(".mi-cache/neuronpedia"),
+    feature_ablation: Annotated[
+        bool,
+        typer.Option("--feature-ablation", help="Run SAE feature ablation probes."),
+    ] = False,
+    feature_steering: Annotated[
+        bool,
+        typer.Option("--feature-steering", help="Run SAE feature steering probes."),
+    ] = False,
+    steer_scale: Annotated[
+        float,
+        typer.Option("--steer-scale", help="Scale used by --feature-steering."),
+    ] = 2.0,
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Device for SAE/model feature probes."),
+    ] = "auto",
     top_k: Annotated[
         int,
         typer.Option("--top-k", min=1, help="Number of features to keep."),
@@ -651,17 +783,68 @@ def features_command(
         dictionary_id = f"{dictionary_id}+neuronpedia"
 
     try:
-        feature_artifact = build_raw_activation_features(
-            run_id=f"{store.run_id}-features",
-            backend=trace.backend,
-            behavior=trace.behavior,
-            activation_path=store.path("activations.npz"),
-            dictionary_id=dictionary_id,
-            source=source_name,
-            top_k=top_k,
-            layer=layer,
-            stream=stream,
-        )
+        if metadata.lower() not in {"none", "neuronpedia"}:
+            raise ValueError("--metadata must be one of: none, neuronpedia")
+        if normalized == "saelens":
+            if layer is not None or stream is not None:
+                typer.secho("--layer/--stream filters are ignored for SAELens; use --sae-id.", fg=typer.colors.YELLOW)
+            sae_config = resolve_saelens_config(
+                trace.behavior.model,
+                sae_release=sae_release,
+                sae_id=sae_id,
+            )
+            metadata_loader = None
+            if metadata.lower() == "neuronpedia" or (source and source.lower() == "neuronpedia"):
+                def metadata_loader(feature_ids):
+                    return load_neuronpedia_metadata(
+                        model=trace.behavior.model,
+                        sae_release=sae_config["release"],
+                        sae_id=sae_config["sae_id"],
+                        feature_ids=feature_ids,
+                        cache_dir=metadata_cache,
+                    )
+
+            probe_backend = None
+            effect_fn = None
+            if feature_ablation or feature_steering:
+                probe_backend = get_backend(trace.backend)(trace.behavior.model, device)
+
+                def effect_fn(replacement):
+                    return probe_backend.target_logit_with_patch(
+                        trace.behavior,
+                        hook_name=sae_config["hook_name"],
+                        position=len(trace.token_ids) - 1,
+                        replacement=replacement,
+                    )
+
+            feature_artifact = build_saelens_features(
+                run_id=f"{store.run_id}-features",
+                backend=trace.backend,
+                behavior=trace.behavior,
+                activation_path=store.path("activations.npz"),
+                sae_release=sae_config["release"],
+                sae_id=sae_config["sae_id"],
+                hook_name=sae_config["hook_name"],
+                top_k=top_k,
+                device="cpu" if device in {None, "auto"} else device,
+                metadata_loader=metadata_loader,
+                feature_ablation=feature_ablation,
+                feature_steering=feature_steering,
+                steer_scale=steer_scale,
+                effect_fn=effect_fn,
+            )
+        else:
+            feature_artifact = build_raw_activation_features(
+                run_id=f"{store.run_id}-features",
+                backend=trace.backend,
+                behavior=trace.behavior,
+                activation_path=store.path("activations.npz"),
+                dictionary_id=dictionary_id,
+                source=source_name,
+                top_k=top_k,
+                layer=layer,
+                stream=stream,
+            )
     except Exception as exc:
         typer.secho(f"features failed: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc

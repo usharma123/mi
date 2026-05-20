@@ -34,6 +34,14 @@ mi inspect runs/france --view logits
 mi inspect runs/france --view logit-lens
 mi inspect runs/france --view activations
 mi features runs/france --dictionary saelens --top-k 50
+mi features runs/france \
+  --dictionary saelens \
+  --sae-release gpt2-small-res-jb \
+  --sae-id blocks.8.hook_resid_pre \
+  --feature-ablation \
+  --feature-steering \
+  --steer-scale 2.0 \
+  --metadata neuronpedia
 mi graph runs/france --method meir --prune-threshold 0.03
 mi graph runs/france --backend circuit-tracer --import circuit_tracer_graph.json
 mi diff --run-a runs/model-a --run-b runs/model-b --out runs/diff
@@ -50,6 +58,7 @@ mi localize runs/france \
 mi validate runs/france \
   --claims examples/claims/france_paris.yml \
   --variants variants.jsonl \
+  --min-variant-pass-rate 0.7 \
   --controls random,same-layer,wrong-target \
   --seed 0
 mi fuzz examples/families/capital_cities.yml --out variants.jsonl
@@ -76,6 +85,8 @@ runs/france/
   features.md
 ```
 
+With `--dictionary saelens`, `mi` loads a pretrained SAE through SAELens, encodes cached activations, ranks sparse features, records reconstruction error, and can run feature ablation/steering probes. Neuronpedia metadata is optional and cached under `.mi-cache/neuronpedia`; labels and examples remain metadata, not evidence.
+
 `mi validate` writes:
 
 ```text
@@ -87,6 +98,8 @@ runs/france/
   validate.md
 ```
 
+When variants are supplied, `mi validate` reruns claim tests across the prompt family. The variant pass rate is written into `validation.json` and `scores.json`, and it can downgrade a claim from `supported` to `weak` when it misses the configured threshold.
+
 Markdown reports are accompanied by static local HTML reports such as `report.html`, `localize.html`, `features.html`, `graph.html`, `validate.html`, and `diff.html`.
 
 ## Backends
@@ -95,7 +108,7 @@ The implemented v0.1/v0.2 path is TransformerLens because it exposes internal ac
 
 Use `mi backends` to inspect which methods each backend supports. Unsupported backend-method combinations fail explicitly instead of producing partial evidence.
 
-`mi test` is CI-friendly: exit code `0` means all supplied claims are supported, `2` means weak, `3` means untested or no claims, and `4` means contradicted. By default it executes claim specs that include behavior and tests. Use `--run` or `--validation` to enforce existing `mi validate` verdicts in CI; claim specs without executable behavior/tests are marked `untested`.
+`mi test` is CI-friendly: exit code `0` means all supplied claims are supported, `2` means weak, `3` means untested or no claims, and `4` means contradicted. By default it executes claim specs that include behavior and tests and writes validation artifacts under `runs/`; use `--out` to choose the directory or `--no-artifacts` for stdout-only checks. Use `--run` or `--validation` to enforce existing `mi validate` verdicts in CI; claim specs without executable behavior/tests are marked `untested`.
 
 ## Development
 

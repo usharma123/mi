@@ -7,6 +7,7 @@ import pytest
 from mi.backends.transformer_lens_backend import TransformerLensBackend
 from mi.core.schema import BehaviorSpec, ClaimSpec, ClaimTestSpec
 from mi.core.validation import evaluate_claim
+from mi.methods.features import build_saelens_features
 
 
 @pytest.mark.integration
@@ -102,3 +103,34 @@ def test_transformer_lens_validation_smoke() -> None:
 
     assert result.verdict == "supported"
     assert evidence
+
+
+@pytest.mark.integration
+def test_saelens_feature_extraction_smoke(tmp_path) -> None:
+    if importlib.util.find_spec("transformer_lens") is None or importlib.util.find_spec("sae_lens") is None:
+        pytest.skip("transformer_lens and sae_lens are required")
+
+    backend = TransformerLensBackend("gpt2-small", device="cpu")
+    behavior = BehaviorSpec(
+        model="gpt2-small",
+        prompt="The capital city of France is called",
+        target_text=" Paris",
+    )
+    activation_path = tmp_path / "activations.npz"
+    backend.trace(behavior, activation_path, run_id="integration-sae-trace", top_k=3)
+
+    features = build_saelens_features(
+        run_id="integration-sae-features",
+        backend="transformer-lens",
+        behavior=behavior,
+        activation_path=activation_path,
+        sae_release="gpt2-small-res-jb",
+        sae_id="blocks.8.hook_resid_pre",
+        hook_name="blocks.8.hook_resid_pre",
+        top_k=1,
+        device="cpu",
+    )
+
+    assert features.features
+    assert features.sae_feature_dim is not None
+    assert features.features[0].dictionary_reconstruction_error is not None

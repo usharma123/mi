@@ -8,7 +8,7 @@ from mi.core.schema import (
     LocalizationArtifact,
     LocalizationCandidate,
 )
-from mi.core.validation import evaluate_claim, find_candidate
+from mi.core.validation import apply_variant_threshold, evaluate_claim, find_candidate, find_variant_candidate
 
 
 def test_find_candidate_matches_method_target_and_hook() -> None:
@@ -73,3 +73,66 @@ def test_evaluate_claim_verdicts() -> None:
     assert weak.verdict == "weak"
     assert contradicted.verdict == "contradicted"
     assert untested.verdict == "untested"
+
+
+def test_variant_candidate_matches_layer_stream_without_position() -> None:
+    claim = ClaimSpec(
+        id="claim",
+        text="test",
+        target=ActivationRef(layer=0, position=9, stream="resid_post"),
+        hook_name="blocks.0.hook_resid_post",
+        tests=[ClaimTestSpec(method="zero_ablation")],
+    )
+    candidate = LocalizationCandidate(
+        method="zero_ablation",
+        target=ActivationRef(layer=0, position=2, stream="resid_post"),
+        hook_name="blocks.0.hook_resid_post",
+        metric_before=2.0,
+        metric_after=1.0,
+        effect=1.0,
+    )
+    localization = LocalizationArtifact(
+        id="loc",
+        backend="transformer-lens",
+        behavior={"model": "fake", "prompt": "hello", "target_text": " world"},
+        candidates=[candidate],
+    )
+
+    assert find_variant_candidate(localization, claim, claim.tests[0]) == candidate
+
+
+def test_apply_variant_threshold_downgrades_supported_claim() -> None:
+    claim = ClaimSpec(
+        id="claim",
+        text="test",
+        target=ActivationRef(layer=0, position=0, stream="resid_post"),
+        min_variant_pass_rate=0.75,
+    )
+    result, _ = evaluate_claim(
+        claim,
+        [
+            (
+                ClaimTestSpec(method="zero_ablation", min_effect=0.5),
+                LocalizationCandidate(
+                    method="zero_ablation",
+                    target=claim.target,
+                    hook_name="blocks.0.hook_resid_post",
+                    metric_before=2.0,
+                    metric_after=1.0,
+                    effect=1.0,
+                ),
+            )
+        ],
+        evidence_start=1,
+    )
+
+    updated = apply_variant_threshold(
+        result,
+        claim=claim,
+        variant_passed=1,
+        variant_total=2,
+        variant_contradicted=False,
+    )
+
+    assert updated.verdict == "weak"
+    assert updated.variant_pass_rate == 0.5

@@ -413,6 +413,29 @@ class TransformerLensBackend:
             warnings=warnings,
         )
 
+    def target_logit_with_patch(
+        self,
+        behavior: BehaviorSpec,
+        *,
+        hook_name: str,
+        position: int,
+        replacement: Any,
+    ) -> tuple[float, float]:
+        model = self.model
+        target_ids = self._target_token_ids(behavior.target_text or "")
+        if not target_ids:
+            raise ValueError("Feature intervention requires a target_text that tokenizes to at least one token.")
+        target_id = target_ids[0]
+        tokens = model.to_tokens(behavior.prompt)
+        baseline_logits = model(tokens)
+        baseline = float(baseline_logits[0, -1, target_id].detach().item())
+        patched_logits = model.run_with_hooks(
+            tokens,
+            fwd_hooks=[(hook_name, self._replace_position_hook(position, replacement))],
+        )
+        patched = float(patched_logits[0, -1, target_id].detach().item())
+        return baseline, patched
+
     def _attach_control_summaries(
         self,
         candidates: list[LocalizationCandidate],
@@ -558,6 +581,20 @@ class TransformerLensBackend:
             patched[:, position : position + 1, :] = clean_value.to(
                 device=value.device, dtype=value.dtype
             )
+            return patched
+
+        return hook
+
+    def _replace_position_hook(self, position: int, replacement: Any):
+        def hook(value, hook):
+            patched = value.clone()
+            patch_value = replacement.to(device=value.device, dtype=value.dtype)
+            if patch_value.ndim == 3:
+                patched[:, position : position + 1, :] = patch_value[:, -1:, :]
+            elif patch_value.ndim == 2:
+                patched[:, position, :] = patch_value[-1, :]
+            else:
+                patched[:, position, :] = patch_value
             return patched
 
         return hook

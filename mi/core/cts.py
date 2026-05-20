@@ -9,7 +9,11 @@ def score_validation(validation: ValidationArtifact) -> ScoreArtifact:
         effects = [test.effect for test in result.tests if test.effect is not None]
         passed = [test.passed for test in result.tests]
         attribution = min(max(sum(effects) / max(len(effects), 1), 0.0) / 10.0, 1.0) if effects else None
-        robustness = sum(1 for item in passed if item) / len(passed) if passed else None
+        robustness = (
+            result.variant_pass_rate
+            if result.variant_pass_rate is not None
+            else (sum(1 for item in passed if item) / len(passed) if passed else None)
+        )
         specificity_values = [
             1.0
             for test in result.tests

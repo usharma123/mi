@@ -53,6 +53,56 @@ def find_candidate(
     return None
 
 
+def find_variant_candidate(
+    localization: LocalizationArtifact,
+    claim: ClaimSpec,
+    test: ClaimTestSpec,
+) -> LocalizationCandidate | None:
+    for candidate in localization.candidates:
+        if candidate.method != test.method:
+            continue
+        if claim.hook_name and candidate.hook_name != claim.hook_name:
+            continue
+        if candidate.target.layer != claim.target.layer:
+            continue
+        if candidate.target.stream != claim.target.stream:
+            continue
+        return candidate
+    return None
+
+
+def apply_variant_threshold(
+    result: ValidationResult,
+    *,
+    claim: ClaimSpec,
+    variant_passed: int,
+    variant_total: int,
+    variant_contradicted: bool,
+) -> ValidationResult:
+    if variant_total == 0:
+        return result
+    pass_rate = variant_passed / variant_total
+    threshold = claim.min_variant_pass_rate if claim.min_variant_pass_rate is not None else 1.0
+    max_failures = claim.max_variant_failures
+    failures = variant_total - variant_passed
+    variant_ok = pass_rate >= threshold and (max_failures is None or failures <= max_failures)
+    verdict = result.verdict
+    if result.verdict == "supported" and not variant_ok:
+        verdict = "weak"
+    if variant_contradicted:
+        verdict = "contradicted"
+    if result.verdict == "untested":
+        verdict = "untested"
+    return result.model_copy(
+        update={
+            "verdict": verdict,
+            "variant_pass_rate": pass_rate,
+            "variant_passed": variant_passed,
+            "variant_total": variant_total,
+        }
+    )
+
+
 def evaluate_claim(
     claim: ClaimSpec,
     tests: list[tuple[ClaimTestSpec, LocalizationCandidate | None]],

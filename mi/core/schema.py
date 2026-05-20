@@ -169,6 +169,11 @@ class FeatureArtifact(MIModel):
     behavior: BehaviorSpec
     dictionary_id: str
     source: Literal["saelens", "neuronpedia", "raw_activation", "custom"] = "raw_activation"
+    sae_release: str | None = None
+    sae_id: str | None = None
+    hook_name: str | None = None
+    sae_input_dim: int | None = None
+    sae_feature_dim: int | None = None
     features: list[FeatureCandidate] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     artifact_refs: dict[str, str] = Field(default_factory=dict)
@@ -228,6 +233,9 @@ class ClaimSpec(MIModel):
     hook_name: str | None = None
     corrupt_prompt: str | None = None
     tests: list[ClaimTestSpec] = Field(default_factory=list)
+    min_variant_pass_rate: float | None = Field(default=None, ge=0, le=1)
+    max_variant_failures: int | None = Field(default=None, ge=0)
+    variant_position: str = "final"
 
 
 class ClaimTestResult(MIModel):
@@ -247,6 +255,9 @@ class ValidationResult(MIModel):
     verdict: Literal["supported", "weak", "contradicted", "untested"]
     tests: list[ClaimTestResult] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+    variant_pass_rate: float | None = None
+    variant_passed: int = 0
+    variant_total: int = 0
 
 
 class ValidationArtifact(MIModel):
