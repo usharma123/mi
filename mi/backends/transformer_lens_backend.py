@@ -10,6 +10,9 @@ from mi.core.schema import (
     ActivationSummary,
     BehaviorSpec,
     DirectLogitAttributionEntry,
+    Evidence,
+    LocalizationArtifact,
+    LocalizationCandidate,
     LogitLensEntry,
     TargetMetrics,
     TopPrediction,
@@ -24,6 +27,11 @@ from mi.methods.activation_capture import (
 
 class TransformerLensBackend:
     name = "transformer-lens"
+    LOCALIZE_HOOKS = {
+        "resid_post": "blocks.{layer}.hook_resid_post",
+        "attn_out": "blocks.{layer}.hook_attn_out",
+        "mlp_out": "blocks.{layer}.hook_mlp_out",
+    }
 
     def __init__(self, model_name: str, device: str | None = None):
         self.model_name = model_name
@@ -114,6 +122,182 @@ class TransformerLensBackend:
             warnings=warnings,
         )
 
+    def localize(
+        self,
+        behavior: BehaviorSpec,
+        *,
+        run_id: str,
+        corrupt_prompt: str | None,
+        methods: set[str],
+        streams: set[str],
+        top_k: int,
+    ) -> LocalizationArtifact:
+        import torch
+
+        model = self.model
+        warnings: list[str] = []
+        target_id: int | None = None
+        target_token: str | None = behavior.target_token
+        if behavior.target_text:
+            target_ids = self._target_token_ids(behavior.target_text)
+            if target_ids:
+                target_id = target_ids[0]
+                target_token = self._decode_token(target_id)
+                if len(target_ids) > 1:
+                    warnings.append(
+                        "Target text tokenized to multiple tokens; localization uses the first "
+                        f"target token only: {target_token!r}."
+                    )
+            else:
+                warnings.append("Target text tokenized to zero tokens; localization skipped.")
+
+        behavior = behavior.model_copy(update={"target_token": target_token})
+        if target_id is None:
+            return LocalizationArtifact(
+                id=run_id,
+                backend=self.name,
+                behavior=behavior,
+                corrupt_prompt=corrupt_prompt,
+                warnings=warnings,
+            )
+
+        clean_tokens = model.to_tokens(behavior.prompt)
+        clean_logits, clean_cache = model.run_with_cache(clean_tokens)
+        clean_last_logits = clean_logits[0, -1].detach()
+        clean_probs = torch.softmax(clean_last_logits.float(), dim=-1)
+        clean_target = self._target_metrics(clean_last_logits, clean_probs, target_id, target_token)
+        clean_position = int(clean_tokens.shape[1] - 1)
+
+        corrupt_tokens = model.to_tokens(corrupt_prompt) if corrupt_prompt else None
+        corrupt_target = None
+        corrupt_cache = None
+        corrupt_baseline_logit = None
+        corrupt_position = None
+        if corrupt_tokens is not None:
+            corrupt_logits, corrupt_cache = model.run_with_cache(corrupt_tokens)
+            corrupt_last_logits = corrupt_logits[0, -1].detach()
+            corrupt_probs = torch.softmax(corrupt_last_logits.float(), dim=-1)
+            corrupt_target = self._target_metrics(
+                corrupt_last_logits, corrupt_probs, target_id, target_token
+            )
+            corrupt_baseline_logit = float(corrupt_last_logits[target_id].item())
+            corrupt_position = int(corrupt_tokens.shape[1] - 1)
+
+        candidates: list[LocalizationCandidate] = []
+        evidence: list[Evidence] = []
+        selected_streams = streams or set(self.LOCALIZE_HOOKS)
+        unknown_streams = selected_streams - set(self.LOCALIZE_HOOKS)
+        if unknown_streams:
+            warnings.append(f"Unsupported localization stream(s): {', '.join(sorted(unknown_streams))}.")
+        selected_streams = selected_streams & set(self.LOCALIZE_HOOKS)
+        baseline_logit = float(clean_last_logits[target_id].item())
+
+        n_layers = int(getattr(model.cfg, "n_layers", 0))
+        for layer in range(n_layers):
+            for stream in sorted(selected_streams):
+                hook_name = self.LOCALIZE_HOOKS[stream].format(layer=layer)
+                if hook_name not in self._cache_dict(clean_cache):
+                    continue
+                target_ref = self._localization_target(layer, clean_position, stream)
+
+                if "zero_ablation" in methods:
+                    ablated_logits = model.run_with_hooks(
+                        clean_tokens,
+                        fwd_hooks=[(hook_name, self._zero_position_hook(clean_position))],
+                    )
+                    after_logit = float(ablated_logits[0, -1, target_id].detach().item())
+                    effect = baseline_logit - after_logit
+                    candidate = LocalizationCandidate(
+                        method="zero_ablation",
+                        target=target_ref,
+                        hook_name=hook_name,
+                        metric_before=baseline_logit,
+                        metric_after=after_logit,
+                        effect=float(effect),
+                    )
+                    candidates.append(candidate)
+                    evidence.append(
+                        Evidence(
+                            id=f"ev_{len(evidence) + 1}",
+                            method="zero_ablation",
+                            target=target_ref,
+                            metric_before=baseline_logit,
+                            metric_after=after_logit,
+                            delta=float(after_logit - baseline_logit),
+                            artifact_refs=["localization.json"],
+                        )
+                    )
+
+                if (
+                    "clean_to_corrupt_patch" in methods
+                    and corrupt_tokens is not None
+                    and corrupt_cache is not None
+                    and corrupt_baseline_logit is not None
+                    and corrupt_position is not None
+                ):
+                    clean_value = self._cache_dict(clean_cache)[hook_name][
+                        :, clean_position : clean_position + 1, :
+                    ].detach()
+                    patched_logits = model.run_with_hooks(
+                        corrupt_tokens,
+                        fwd_hooks=[
+                            (
+                                hook_name,
+                                self._patch_position_hook(corrupt_position, clean_value),
+                            )
+                        ],
+                    )
+                    after_logit = float(patched_logits[0, -1, target_id].detach().item())
+                    target_ref = self._localization_target(layer, corrupt_position, stream)
+                    effect = after_logit - corrupt_baseline_logit
+                    candidate = LocalizationCandidate(
+                        method="clean_to_corrupt_patch",
+                        target=target_ref,
+                        hook_name=hook_name,
+                        metric_before=corrupt_baseline_logit,
+                        metric_after=after_logit,
+                        effect=float(effect),
+                    )
+                    candidates.append(candidate)
+                    evidence.append(
+                        Evidence(
+                            id=f"ev_{len(evidence) + 1}",
+                            method="clean_to_corrupt_patch",
+                            target=target_ref,
+                            metric_before=corrupt_baseline_logit,
+                            metric_after=after_logit,
+                            delta=float(after_logit - corrupt_baseline_logit),
+                            artifact_refs=["localization.json"],
+                        )
+                    )
+
+        if "clean_to_corrupt_patch" in methods and corrupt_prompt is None:
+            warnings.append("clean_to_corrupt_patch requested without --corrupt-prompt; skipped.")
+
+        ranked_candidates: list[LocalizationCandidate] = []
+        for method in ("zero_ablation", "clean_to_corrupt_patch"):
+            method_candidates = [
+                item for item in candidates if item.method == method
+            ]
+            method_candidates = sorted(
+                method_candidates, key=lambda item: abs(item.effect), reverse=True
+            )[:top_k]
+            ranked_candidates.extend(
+                item.model_copy(update={"rank": rank})
+                for rank, item in enumerate(method_candidates, start=1)
+            )
+        return LocalizationArtifact(
+            id=run_id,
+            backend=self.name,
+            behavior=behavior,
+            corrupt_prompt=corrupt_prompt,
+            target=clean_target,
+            corrupt_target=corrupt_target,
+            candidates=ranked_candidates,
+            evidence=evidence,
+            warnings=warnings,
+        )
+
     def _target_token_ids(self, target_text: str) -> list[int]:
         target_tokens = self.model.to_tokens(target_text, prepend_bos=False)
         return [int(token_id) for token_id in target_tokens[0].detach().cpu().tolist()]
@@ -160,6 +344,29 @@ class TransformerLensBackend:
             probability=float(probs[target_id].item()),
             rank=rank,
         )
+
+    def _localization_target(self, layer: int, position: int, stream: str) -> Any:
+        from mi.core.schema import ActivationRef
+
+        return ActivationRef(layer=layer, position=position, stream=stream)
+
+    def _zero_position_hook(self, position: int):
+        def hook(value, hook):
+            patched = value.clone()
+            patched[:, position, :] = 0
+            return patched
+
+        return hook
+
+    def _patch_position_hook(self, position: int, clean_value: Any):
+        def hook(value, hook):
+            patched = value.clone()
+            patched[:, position : position + 1, :] = clean_value.to(
+                device=value.device, dtype=value.dtype
+            )
+            return patched
+
+        return hook
 
     def _cache_dict(self, cache: Any) -> dict[str, Any]:
         return getattr(cache, "cache_dict", cache)

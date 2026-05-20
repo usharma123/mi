@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from mi.core.schema import BehaviorSpec, TraceArtifact
+from mi.core.schema import BehaviorSpec, LocalizationArtifact, TraceArtifact
 
 
 class BackendUnavailable(RuntimeError):
@@ -23,6 +23,18 @@ class TraceBackend(Protocol):
     ) -> TraceArtifact:
         ...
 
+    def localize(
+        self,
+        behavior: BehaviorSpec,
+        *,
+        run_id: str,
+        corrupt_prompt: str | None,
+        methods: set[str],
+        streams: set[str],
+        top_k: int,
+    ) -> LocalizationArtifact:
+        ...
+
 
 class NotImplementedTraceBackend:
     name = "not-implemented"
@@ -40,3 +52,15 @@ class NotImplementedTraceBackend:
         top_k: int,
     ) -> TraceArtifact:
         raise NotImplementedError(f"{self.name} backend is not implemented in mi v0.1.")
+
+    def localize(
+        self,
+        behavior: BehaviorSpec,
+        *,
+        run_id: str,
+        corrupt_prompt: str | None,
+        methods: set[str],
+        streams: set[str],
+        top_k: int,
+    ) -> LocalizationArtifact:
+        raise NotImplementedError(f"{self.name} localization is not implemented yet.")

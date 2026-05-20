@@ -9,8 +9,12 @@ import typer
 from mi import __version__
 from mi.backends import get_backend
 from mi.core.artifact_store import ArtifactStore, default_run_dir
-from mi.core.schema import BehaviorSpec, RunManifest, TraceArtifact
-from mi.report import render_json_report, render_markdown
+from mi.core.schema import BehaviorSpec, LocalizationArtifact, RunManifest, TraceArtifact
+from mi.report import (
+    render_json_report,
+    render_localization_markdown,
+    render_markdown,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -166,6 +170,88 @@ def inspect_command(
 
     typer.secho(f"Unknown inspect view: {view}", fg=typer.colors.RED, err=True)
     raise typer.Exit(code=1)
+
+
+@app.command("localize")
+def localize_command(
+    run_path: Annotated[Path, typer.Argument(help="Run directory containing trace.json.")],
+    corrupt_prompt: Annotated[
+        str | None,
+        typer.Option("--corrupt-prompt", help="Optional corrupt prompt for clean-to-corrupt patching."),
+    ] = None,
+    methods: Annotated[
+        str,
+        typer.Option(
+            "--methods",
+            help="Comma-separated localization methods: zero-ablation,clean-to-corrupt-patch.",
+        ),
+    ] = "zero-ablation",
+    streams: Annotated[
+        str,
+        typer.Option("--streams", help="Comma-separated streams: resid_post,attn_out,mlp_out."),
+    ] = "resid_post,attn_out,mlp_out",
+    top_k: Annotated[
+        int,
+        typer.Option("--top-k", min=1, help="Number of ranked candidates to keep."),
+    ] = 20,
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", help="Backend adapter override. Defaults to trace backend."),
+    ] = None,
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Device to use: auto, cpu, cuda, or mps."),
+    ] = "auto",
+) -> None:
+    store, trace = _load_trace(run_path)
+    method_set = {
+        item.strip().lower().replace("-", "_") for item in methods.split(",") if item.strip()
+    }
+    stream_set = {item.strip().lower() for item in streams.split(",") if item.strip()}
+    supported_methods = {"zero_ablation", "clean_to_corrupt_patch"}
+    unknown_methods = method_set - supported_methods
+    if unknown_methods:
+        typer.secho(
+            f"Unknown localization method(s): {', '.join(sorted(unknown_methods))}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    selected_backend = backend or trace.backend
+    try:
+        backend_factory = get_backend(selected_backend)
+        trace_backend = backend_factory(trace.behavior.model, device)
+        localization = trace_backend.localize(
+            trace.behavior,
+            run_id=f"{store.run_id}-localize",
+            corrupt_prompt=corrupt_prompt,
+            methods=method_set,
+            streams=stream_set,
+            top_k=top_k,
+        )
+    except Exception as exc:
+        typer.secho(f"localize failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    artifact_refs = {
+        "localization": "localization.json",
+        "candidates": "candidates.json",
+        "evidence": "evidence.jsonl",
+        "report_md": "localize.md",
+    }
+    localization = localization.model_copy(update={"artifact_refs": artifact_refs})
+    store.write_json("localization.json", localization)
+    store.write_json(
+        "candidates.json",
+        [candidate.model_dump(mode="json") for candidate in localization.candidates],
+    )
+    evidence_lines = "\n".join(
+        evidence.model_dump_json() for evidence in localization.evidence
+    )
+    store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
+    store.write_text("localize.md", render_localization_markdown(localization))
+    typer.echo(f"Wrote localization artifacts to {store.root}")
 
 
 @app.command("report")

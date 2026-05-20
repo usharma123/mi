@@ -30,3 +30,29 @@ def test_transformer_lens_backend_smoke(tmp_path) -> None:
     assert trace.top_predictions
     assert trace.target is not None
     assert (tmp_path / "activations.npz").exists()
+
+
+@pytest.mark.integration
+def test_transformer_lens_localize_smoke() -> None:
+    if importlib.util.find_spec("transformer_lens") is None:
+        pytest.skip("transformer_lens is not installed")
+
+    backend = TransformerLensBackend("gpt2-small", device="cpu")
+    behavior = BehaviorSpec(
+        model="gpt2-small",
+        prompt="The capital of France is",
+        target_text=" Paris",
+    )
+
+    localization = backend.localize(
+        behavior,
+        run_id="integration-localize",
+        corrupt_prompt="The capital of Germany is",
+        methods={"zero_ablation", "clean_to_corrupt_patch"},
+        streams={"resid_post"},
+        top_k=2,
+    )
+
+    assert localization.candidates
+    assert any(item.method == "zero_ablation" for item in localization.candidates)
+    assert any(item.method == "clean_to_corrupt_patch" for item in localization.candidates)

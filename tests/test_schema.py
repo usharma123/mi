@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from mi.core.schema import ActivationRef, BehaviorSpec, Claim, Evidence, FeatureRef, Intervention
+from mi.core.schema import (
+    ActivationRef,
+    BehaviorSpec,
+    Claim,
+    Evidence,
+    FeatureRef,
+    Intervention,
+    LocalizationArtifact,
+    LocalizationCandidate,
+)
 
 
 def test_behavior_spec_round_trips_json() -> None:
@@ -54,3 +63,24 @@ def test_feature_labels_are_metadata_not_evidence() -> None:
 
     assert intervention.target.label == "France geography"
     assert intervention.target.metadata["neuronpedia_url"] == "https://example.test"
+
+
+def test_localization_artifact_round_trips_json() -> None:
+    behavior = BehaviorSpec(model="gpt2-small", prompt="Hello", target_text=" world")
+    candidate = LocalizationCandidate(
+        method="zero_ablation",
+        target=ActivationRef(layer=0, position=2, stream="resid_post"),
+        hook_name="blocks.0.hook_resid_post",
+        metric_before=2.0,
+        metric_after=1.0,
+        effect=1.0,
+        rank=1,
+    )
+    artifact = LocalizationArtifact(
+        id="run-localize",
+        backend="transformer-lens",
+        behavior=behavior,
+        candidates=[candidate],
+    )
+
+    assert LocalizationArtifact.model_validate_json(artifact.model_dump_json()) == artifact

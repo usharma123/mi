@@ -105,6 +105,17 @@ class DirectLogitAttributionEntry(MIModel):
     contribution: float
 
 
+class LocalizationCandidate(MIModel):
+    method: Literal["zero_ablation", "clean_to_corrupt_patch"]
+    target: ActivationRef
+    hook_name: str
+    metric_before: float
+    metric_after: float
+    effect: float
+    rank: int | None = None
+    controls: list[str] = Field(default_factory=list)
+
+
 class ActivationSummary(MIModel):
     name: str
     shape: list[int]
@@ -125,6 +136,20 @@ class TraceArtifact(MIModel):
     logit_lens: list[LogitLensEntry] = Field(default_factory=list)
     direct_logit_attribution: list[DirectLogitAttributionEntry] = Field(default_factory=list)
     activation_inventory: list[ActivationSummary] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LocalizationArtifact(MIModel):
+    id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    backend: str
+    behavior: BehaviorSpec
+    corrupt_prompt: str | None = None
+    target: TargetMetrics | None = None
+    corrupt_target: TargetMetrics | None = None
+    candidates: list[LocalizationCandidate] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     artifact_refs: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

@@ -33,8 +33,26 @@ mi trace --model gpt2-small --prompt "The capital of France is" --target " Paris
 mi inspect runs/france --view logits
 mi inspect runs/france --view logit-lens
 mi inspect runs/france --view activations
+mi localize runs/france --methods zero-ablation --top-k 20
+mi localize runs/france \
+  --corrupt-prompt "The capital of Germany is" \
+  --methods zero-ablation,clean-to-corrupt-patch
 mi report runs/france --format md,json
 ```
+
+`mi localize` writes:
+
+```text
+runs/france/
+  localization.json
+  candidates.json
+  evidence.jsonl
+  localize.md
+```
+
+## Backends
+
+The implemented v0.1/v0.2 path is TransformerLens because it exposes internal activations and hook-based interventions. Ollama-style generation APIs are not enough for causal tracing by themselves: `mi` needs residual streams, component outputs, and intervention hooks. Models served by Ollama can become useful when their underlying weights are loaded through a PyTorch/Hugging Face/NNsight-style backend that exposes those tensors.
 
 ## Development
 

@@ -8,6 +8,8 @@ from mi.core.schema import (
     ActivationSummary,
     BehaviorSpec,
     DirectLogitAttributionEntry,
+    LocalizationArtifact,
+    LocalizationCandidate,
     LogitLensEntry,
     TargetMetrics,
     TopPrediction,
@@ -57,6 +59,41 @@ class FakeBackend:
                     artifact_key="blocks__0__hook_resid_post",
                 )
             ],
+        )
+
+    def localize(
+        self,
+        behavior: BehaviorSpec,
+        *,
+        run_id: str,
+        corrupt_prompt: str | None,
+        methods: set[str],
+        streams: set[str],
+        top_k: int,
+    ):
+        behavior = behavior.model_copy(update={"target_token": " world"})
+        return LocalizationArtifact(
+            id=run_id,
+            backend=self.name,
+            behavior=behavior,
+            corrupt_prompt=corrupt_prompt,
+            target=TargetMetrics(token_id=10, token=" world", logit=2.0, probability=0.4, rank=1),
+            corrupt_target=TargetMetrics(
+                token_id=10, token=" world", logit=1.0, probability=0.2, rank=3
+            )
+            if corrupt_prompt
+            else None,
+            candidates=[
+                LocalizationCandidate(
+                    method="zero_ablation",
+                    hook_name="blocks.0.hook_resid_post",
+                    target={"layer": 0, "position": 2, "stream": "resid_post"},
+                    metric_before=2.0,
+                    metric_after=1.25,
+                    effect=0.75,
+                    rank=1,
+                )
+            ][:top_k],
         )
 
 
@@ -118,3 +155,42 @@ def test_inspect_and_report_commands(tmp_path, monkeypatch) -> None:
     assert "target_logit=1.0000" in lens_result.output
     assert report_result.exit_code == 0, report_result.output
     assert (run_path / "report.json").exists()
+
+
+def test_localize_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    trace_result = runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+    assert trace_result.exit_code == 0, trace_result.output
+
+    result = runner.invoke(
+        app,
+        [
+            "localize",
+            str(run_path),
+            "--corrupt-prompt",
+            "Goodbye, there",
+            "--methods",
+            "zero-ablation,clean-to-corrupt-patch",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (run_path / "localization.json").exists()
+    assert (run_path / "candidates.json").exists()
+    assert (run_path / "evidence.jsonl").exists()
+    assert (run_path / "localize.md").exists()
