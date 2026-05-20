@@ -15,6 +15,8 @@ from mi.core.schema import (
     TargetMetrics,
     TopPrediction,
     TraceArtifact,
+    ValidationArtifact,
+    ValidationResult,
 )
 
 
@@ -513,3 +515,79 @@ def test_test_command_loads_claims_and_returns_untested(tmp_path) -> None:
 
     assert result.exit_code == 3
     assert "test_claim -> untested" in result.output
+
+
+def test_test_command_executes_claim_with_behavior(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    claim = tmp_path / "claim.yml"
+    claim.write_text(
+        "\n".join(
+            [
+                "id: executable_claim",
+                "text: Executable claim.",
+                "target:",
+                "  layer: 0",
+                "  position: 2",
+                "  stream: resid_post",
+                "hook_name: blocks.0.hook_resid_post",
+                "behavior:",
+                "  model: fake-model",
+                "  prompt: Hello, there",
+                "  target_text: ' world'",
+                "tests:",
+                "  - method: zero_ablation",
+                "    min_effect: 0.5",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["test", str(claim), "--device", "cpu"])
+
+    assert result.exit_code == 0, result.output
+    assert "executable_claim -> supported" in result.output
+
+
+def test_test_command_enforces_run_validation_artifact(tmp_path) -> None:
+    runner = CliRunner()
+    claim = tmp_path / "claim.yml"
+    claim.write_text(
+        "id: test_claim\ntext: Test claim.\ntarget:\n  layer: 0\n  position: 0\n  stream: resid_post\n",
+        encoding="utf-8",
+    )
+    run_path = tmp_path / "run"
+    run_path.mkdir()
+    validation = ValidationArtifact(
+        id="validation",
+        backend="transformer-lens",
+        results=[ValidationResult(claim_id="test_claim", verdict="supported")],
+    )
+    (run_path / "validation.json").write_text(validation.model_dump_json(), encoding="utf-8")
+
+    result = runner.invoke(app, ["test", str(claim), "--run", str(run_path), "--model", "fake"])
+
+    assert result.exit_code == 0, result.output
+    assert "test_claim -> supported" in result.output
+
+
+def test_test_command_marks_missing_validation_claim_untested(tmp_path) -> None:
+    runner = CliRunner()
+    claim = tmp_path / "claim.yml"
+    claim.write_text(
+        "id: missing_claim\ntext: Missing claim.\ntarget:\n  layer: 0\n  position: 0\n  stream: resid_post\n",
+        encoding="utf-8",
+    )
+    validation = ValidationArtifact(
+        id="validation",
+        backend="transformer-lens",
+        results=[ValidationResult(claim_id="other_claim", verdict="supported")],
+    )
+    validation_path = tmp_path / "validation.json"
+    validation_path.write_text(validation.model_dump_json(), encoding="utf-8")
+
+    result = runner.invoke(app, ["test", str(claim), "--validation", str(validation_path)])
+
+    assert result.exit_code == 3
+    assert "missing_claim -> untested" in result.output
+    assert "did not include requested claim" in result.output

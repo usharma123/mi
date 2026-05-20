@@ -38,6 +38,8 @@ mi graph runs/france --method meir --prune-threshold 0.03
 mi graph runs/france --backend circuit-tracer --import circuit_tracer_graph.json
 mi diff --run-a runs/model-a --run-b runs/model-b --out runs/diff
 mi test "examples/claims/*.yml" --model gpt2-small
+mi test "examples/claims/*.yml" --run runs/france
+mi test "examples/claims/*.yml" --validation runs/france/validation.json
 mi localize runs/france --methods zero-ablation --top-k 20
 mi localize runs/france \
   --corrupt-prompt "The capital of Germany is" \
@@ -93,7 +95,7 @@ The implemented v0.1/v0.2 path is TransformerLens because it exposes internal ac
 
 Use `mi backends` to inspect which methods each backend supports. Unsupported backend-method combinations fail explicitly instead of producing partial evidence.
 
-`mi test` is CI-friendly: exit code `0` means all supplied claims are supported, `2` means weak, `3` means untested or no claims, and `4` means contradicted. In v1.0 it provides offline claim-spec regression checks; run `mi validate` to produce causal verdicts.
+`mi test` is CI-friendly: exit code `0` means all supplied claims are supported, `2` means weak, `3` means untested or no claims, and `4` means contradicted. By default it executes claim specs that include behavior and tests. Use `--run` or `--validation` to enforce existing `mi validate` verdicts in CI; claim specs without executable behavior/tests are marked `untested`.
 
 ## Development
 

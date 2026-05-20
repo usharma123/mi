@@ -23,7 +23,7 @@ from mi.core.schema import (
     ValidationArtifact,
 )
 from mi.core.graph_builder import build_meir_graph, graph_to_graphml
-from mi.core.regression import claim_paths_from_globs, regression_exit_code
+from mi.core.regression import claim_paths_from_globs, regression_exit_code, validation_for_claims
 from mi.core.validation import evaluate_claim, find_candidate, load_claim_specs
 from mi.methods.features import build_raw_activation_features
 from mi.methods.localization import parse_controls
@@ -453,42 +453,140 @@ def test_command(
         list[str],
         typer.Argument(help="Claim file glob(s), for example examples/claims/*.yml."),
     ],
-    model: Annotated[str, typer.Option("--model", help="Model label for test output.")] = "gpt2-small",
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Model override for executable claim specs."),
+    ] = None,
+    backend: Annotated[
+        str,
+        typer.Option("--backend", help="Backend adapter to use when executing claim specs."),
+    ] = "transformer-lens",
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Device to use when executing claim specs."),
+    ] = "auto",
+    controls: Annotated[
+        str,
+        typer.Option(
+            "--controls",
+            help="Comma-separated controls for executed tests: random,same-layer,wrong-target,wrong-corrupt.",
+        ),
+    ] = "",
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for executed tests."),
+    ] = 0,
+    top_k: Annotated[
+        int,
+        typer.Option("--top-k", min=1, help="Localization candidates to retain for executed tests."),
+    ] = 100,
+    run_path: Annotated[
+        Path | None,
+        typer.Option("--run", help="Run directory containing validation.json to enforce."),
+    ] = None,
+    validation_path: Annotated[
+        Path | None,
+        typer.Option("--validation", help="Validation artifact JSON to enforce."),
+    ] = None,
 ) -> None:
+    if run_path and validation_path:
+        typer.secho("Use only one of --run or --validation.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     paths = claim_paths_from_globs(tuple(claim_patterns))
     if not paths:
         typer.secho("No claim files matched.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=3)
-    worst_code = 0
+    all_claims = []
+    loaded_by_path = []
     for path in paths:
         try:
             claims = load_claim_specs(path)
         except Exception as exc:
             typer.secho(f"{path}: failed to load claims: {exc}", fg=typer.colors.RED, err=True)
-            worst_code = max(worst_code, 3)
-            continue
-        validation = ValidationArtifact(
-            id=f"test-{path.stem}",
-            backend="offline",
-            claims=claims,
-            results=[
-                {
-                    "claim_id": claim.id,
-                    "verdict": "untested",
-                    "tests": [],
-                    "evidence_ids": [],
-                }
-                for claim in claims
-            ],
-            warnings=[
-                f"Offline regression test loaded claim specs for {model}; run `mi validate` for causal verdicts."
-            ],
-        )
-        code = regression_exit_code(validation)
-        worst_code = max(worst_code, code)
-        for result in validation.results:
+            raise typer.Exit(code=3) from exc
+        all_claims.extend(claims)
+        loaded_by_path.append((path, claims))
+
+    source = validation_path or (run_path / "validation.json" if run_path else None)
+    if source is not None:
+        if not source.exists():
+            typer.secho(f"No validation artifact found at {source}.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=3)
+        try:
+            validation = ValidationArtifact.model_validate_json(source.read_text(encoding="utf-8"))
+        except Exception as exc:
+            typer.secho(f"{source}: failed to load validation artifact: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=3) from exc
+        scoped = validation_for_claims(validation, all_claims)
+        by_id = {result.claim_id: result for result in scoped.results}
+        for path, claims in loaded_by_path:
+            for claim in claims:
+                result = by_id[claim.id]
+                typer.echo(f"{path}: {result.claim_id} -> {result.verdict}")
+        for warning in scoped.warnings:
+            typer.echo(f"warning: {warning}")
+        raise typer.Exit(code=regression_exit_code(scoped))
+
+    try:
+        control_set = parse_controls(controls)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    results = []
+    evidence = []
+    warnings = []
+    evidence_start = 1
+    for path, claims in loaded_by_path:
+        for claim in claims:
+            if claim.behavior is None or not claim.tests:
+                result, claim_evidence = evaluate_claim(claim, [], evidence_start=evidence_start)
+                warnings.append(
+                    f"{claim.id}: claim spec has no executable behavior/tests; marked untested."
+                )
+            else:
+                behavior = claim.behavior
+                model_name = model or behavior.model
+                behavior = behavior.model_copy(update={"model": model_name})
+                methods = {test.method for test in claim.tests}
+                streams = {claim.target.stream}
+                try:
+                    test_backend = get_backend(backend)(model_name, device)
+                    localization = test_backend.localize(
+                        behavior,
+                        run_id=f"test-{claim.id}",
+                        corrupt_prompt=claim.corrupt_prompt or behavior.corrupt_prompt,
+                        methods=methods,
+                        streams=streams,
+                        controls=control_set,
+                        position=f"index:{claim.target.position}",
+                        seed=seed,
+                        top_k=top_k,
+                    )
+                except Exception as exc:
+                    typer.secho(f"{path}: {claim.id} execution failed: {exc}", fg=typer.colors.RED, err=True)
+                    raise typer.Exit(code=1) from exc
+                result, claim_evidence = evaluate_claim(
+                    claim,
+                    [(test, find_candidate(localization, claim, test)) for test in claim.tests],
+                    evidence_start=evidence_start,
+                )
+            evidence.extend(claim_evidence)
+            evidence_start += len(claim_evidence)
+            results.append(result)
             typer.echo(f"{path}: {result.claim_id} -> {result.verdict}")
-    raise typer.Exit(code=worst_code)
+
+    validation = ValidationArtifact(
+        id="test-executed",
+        backend=backend,
+        claims=all_claims,
+        results=results,
+        evidence=evidence,
+        warnings=warnings,
+    )
+    for warning in warnings:
+        typer.echo(f"warning: {warning}")
+    raise typer.Exit(code=regression_exit_code(validation))
 
 
 @app.command("fuzz")
