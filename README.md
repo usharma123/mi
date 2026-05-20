@@ -36,7 +36,14 @@ mi inspect runs/france --view activations
 mi localize runs/france --methods zero-ablation --top-k 20
 mi localize runs/france \
   --corrupt-prompt "The capital of Germany is" \
-  --methods zero-ablation,clean-to-corrupt-patch
+  --methods zero-ablation,clean-to-corrupt-patch \
+  --controls random,same-layer,wrong-target \
+  --position final \
+  --seed 0
+mi validate runs/france \
+  --claims examples/claims/france_paris.yml \
+  --controls random,same-layer,wrong-target \
+  --seed 0
 mi report runs/france --format md,json
 ```
 
@@ -48,6 +55,16 @@ runs/france/
   candidates.json
   evidence.jsonl
   localize.md
+```
+
+`mi validate` writes:
+
+```text
+runs/france/
+  claims.json
+  validation.json
+  evidence.jsonl
+  validate.md
 ```
 
 ## Backends

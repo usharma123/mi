@@ -1,0 +1,17 @@
+id: france_capital_called_resid10
+text: L10 residual stream at the final token supports predicting Paris for a France-capital prompt.
+target:
+  layer: 10
+  position: 7
+  stream: resid_post
+hook_name: blocks.10.hook_resid_post
+behavior:
+  model: gpt2-small
+  prompt: "The capital city of France is called"
+  target_text: " Paris"
+corrupt_prompt: "The capital city of Germany is called"
+tests:
+  - method: zero_ablation
+    min_effect: 8.0
+  - method: clean_to_corrupt_patch
+    min_effect: 3.0

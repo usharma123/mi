@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mi.core.schema import LocalizationArtifact, TraceArtifact
+from mi.core.schema import LocalizationArtifact, TraceArtifact, ValidationArtifact
 
 
 def render_json_report(trace: TraceArtifact) -> dict[str, Any]:
@@ -39,3 +39,7 @@ def render_localization_json_report(localization: LocalizationArtifact) -> dict[
         "warnings": localization.warnings,
         "artifact_refs": localization.artifact_refs,
     }
+
+
+def render_validation_json_report(validation: ValidationArtifact) -> dict[str, Any]:
+    return validation.model_dump(mode="json")

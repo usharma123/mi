@@ -9,11 +9,20 @@ import typer
 from mi import __version__
 from mi.backends import get_backend
 from mi.core.artifact_store import ArtifactStore, default_run_dir
-from mi.core.schema import BehaviorSpec, LocalizationArtifact, RunManifest, TraceArtifact
+from mi.core.schema import (
+    BehaviorSpec,
+    LocalizationArtifact,
+    RunManifest,
+    TraceArtifact,
+    ValidationArtifact,
+)
+from mi.core.validation import evaluate_claim, find_candidate, load_claim_specs
+from mi.methods.localization import parse_controls
 from mi.report import (
     render_json_report,
     render_localization_markdown,
     render_markdown,
+    render_validation_markdown,
 )
 
 app = typer.Typer(
@@ -190,6 +199,21 @@ def localize_command(
         str,
         typer.Option("--streams", help="Comma-separated streams: resid_post,attn_out,mlp_out."),
     ] = "resid_post,attn_out,mlp_out",
+    controls: Annotated[
+        str,
+        typer.Option(
+            "--controls",
+            help="Comma-separated controls: random,same-layer,wrong-target,wrong-corrupt.",
+        ),
+    ] = "",
+    position: Annotated[
+        str,
+        typer.Option("--position", help="Position spec: final, first-diff, index:N, or token:TEXT."),
+    ] = "final",
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for deterministic control sampling."),
+    ] = 0,
     top_k: Annotated[
         int,
         typer.Option("--top-k", min=1, help="Number of ranked candidates to keep."),
@@ -217,6 +241,11 @@ def localize_command(
             err=True,
         )
         raise typer.Exit(code=1)
+    try:
+        control_set = parse_controls(controls)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
 
     selected_backend = backend or trace.backend
     try:
@@ -228,6 +257,9 @@ def localize_command(
             corrupt_prompt=corrupt_prompt,
             methods=method_set,
             streams=stream_set,
+            controls=control_set,
+            position=position,
+            seed=seed,
             top_k=top_k,
         )
     except Exception as exc:
@@ -252,6 +284,134 @@ def localize_command(
     store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
     store.write_text("localize.md", render_localization_markdown(localization))
     typer.echo(f"Wrote localization artifacts to {store.root}")
+
+
+@app.command("validate")
+def validate_command(
+    run_path: Annotated[Path, typer.Argument(help="Run directory containing trace.json.")],
+    claims_path: Annotated[
+        Path,
+        typer.Option("--claims", help="YAML or JSON claim spec file."),
+    ],
+    controls: Annotated[
+        str,
+        typer.Option(
+            "--controls",
+            help="Comma-separated controls: random,same-layer,wrong-target,wrong-corrupt.",
+        ),
+    ] = "",
+    position: Annotated[
+        str,
+        typer.Option("--position", help="Position spec for rerun localization."),
+    ] = "final",
+    seed: Annotated[
+        int,
+        typer.Option("--seed", help="Random seed for deterministic control sampling."),
+    ] = 0,
+    backend: Annotated[
+        str | None,
+        typer.Option("--backend", help="Backend adapter override. Defaults to trace backend."),
+    ] = None,
+    device: Annotated[
+        str | None,
+        typer.Option("--device", help="Device to use: auto, cpu, cuda, or mps."),
+    ] = "auto",
+) -> None:
+    store, trace = _load_trace(run_path)
+    try:
+        claims = load_claim_specs(claims_path)
+        control_set = parse_controls(controls)
+    except Exception as exc:
+        typer.secho(f"validate failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    selected_backend = backend or trace.backend
+    localizations: list[LocalizationArtifact] = []
+    if store.path("localization.json").exists():
+        localizations.append(store.read_model("localization.json", LocalizationArtifact))
+
+    backend_instances = {}
+    warnings: list[str] = []
+    validation_evidence = []
+    validation_results = []
+    for claim in claims:
+        claim_tests = claim.tests
+        behavior = claim.behavior or trace.behavior
+        corrupt_prompt = claim.corrupt_prompt
+        resolved_tests = []
+        for test in claim_tests:
+            candidate = _find_candidate_in_localizations(localizations, claim, test)
+            needs_controls = control_set and (
+                candidate is None or candidate.control_summary is None
+            )
+            if candidate is None or needs_controls:
+                backend_key = (selected_backend, behavior.model, device)
+                if backend_key not in backend_instances:
+                    try:
+                        backend_factory = get_backend(selected_backend)
+                        backend_instances[backend_key] = backend_factory(behavior.model, device)
+                    except Exception as exc:
+                        typer.secho(f"validate failed: {exc}", fg=typer.colors.RED, err=True)
+                        raise typer.Exit(code=1) from exc
+                try:
+                    rerun = backend_instances[backend_key].localize(
+                        behavior,
+                        run_id=f"{store.run_id}-validate-{claim.id}",
+                        corrupt_prompt=corrupt_prompt,
+                        methods={test.method},
+                        streams={claim.target.stream},
+                        controls=control_set,
+                        position=position,
+                        seed=seed,
+                        top_k=999,
+                    )
+                except Exception as exc:
+                    typer.secho(f"validate failed: {exc}", fg=typer.colors.RED, err=True)
+                    raise typer.Exit(code=1) from exc
+                localizations.append(rerun)
+                warnings.extend(rerun.warnings)
+                candidate = _find_candidate_in_localizations([rerun], claim, test)
+            resolved_tests.append((test, candidate))
+
+        result, evidence = evaluate_claim(
+            claim,
+            resolved_tests,
+            evidence_start=len(validation_evidence) + 1,
+        )
+        validation_results.append(result)
+        validation_evidence.extend(evidence)
+
+    artifact_refs = {
+        "claims": "claims.json",
+        "validation": "validation.json",
+        "evidence": "evidence.jsonl",
+        "report_md": "validate.md",
+    }
+    validation = ValidationArtifact(
+        id=f"{store.run_id}-validate",
+        backend=selected_backend,
+        claims=claims,
+        results=validation_results,
+        evidence=validation_evidence,
+        artifact_refs=artifact_refs,
+        warnings=warnings,
+    )
+    store.write_json("claims.json", [claim.model_dump(mode="json") for claim in claims])
+    store.write_json("validation.json", validation)
+    evidence_lines = "\n".join(
+        evidence.model_dump_json() for evidence in validation.evidence
+    )
+    store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
+    store.write_text("validate.md", render_validation_markdown(validation))
+    typer.echo(f"Wrote validation artifacts to {store.root}")
+
+
+def _find_candidate_in_localizations(localizations, claim, test):
+    for localization in localizations:
+        candidate = find_candidate(localization, claim, test)
+        if candidate is not None:
+            return candidate
+    return None
 
 
 @app.command("report")

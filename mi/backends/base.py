@@ -31,6 +31,9 @@ class TraceBackend(Protocol):
         corrupt_prompt: str | None,
         methods: set[str],
         streams: set[str],
+        controls: set[str],
+        position: str,
+        seed: int,
         top_k: int,
     ) -> LocalizationArtifact:
         ...
@@ -61,6 +64,9 @@ class NotImplementedTraceBackend:
         corrupt_prompt: str | None,
         methods: set[str],
         streams: set[str],
+        controls: set[str],
+        position: str,
+        seed: int,
         top_k: int,
     ) -> LocalizationArtifact:
         raise NotImplementedError(f"{self.name} localization is not implemented yet.")

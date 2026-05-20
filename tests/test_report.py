@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-from mi.core.schema import LocalizationArtifact, LocalizationCandidate, TargetMetrics
+from mi.core.schema import (
+    ClaimSpec,
+    ClaimTestResult,
+    LocalizationArtifact,
+    LocalizationCandidate,
+    TargetMetrics,
+    ValidationArtifact,
+    ValidationResult,
+)
 from mi.report import (
     render_json_report,
     render_localization_json_report,
     render_localization_markdown,
     render_markdown,
+    render_validation_markdown,
 )
 
 
@@ -54,3 +63,38 @@ def test_localization_reports_contain_candidates(sample_trace) -> None:
     assert "# Causal Localization Report" in markdown
     assert "zero_ablation" in markdown
     assert json_report["candidates"][0]["effect"] == 2.4
+
+
+def test_validation_report_contains_verdicts(sample_trace) -> None:
+    claim = ClaimSpec(
+        id="sample_claim",
+        text="Sample claim.",
+        target={"layer": 0, "position": 4, "stream": "resid_post"},
+    )
+    validation = ValidationArtifact(
+        id="sample-validation",
+        backend="transformer-lens",
+        claims=[claim],
+        results=[
+            ValidationResult(
+                claim_id=claim.id,
+                verdict="supported",
+                tests=[
+                    ClaimTestResult(
+                        method="zero_ablation",
+                        target=claim.target,
+                        passed=True,
+                        effect=1.0,
+                        min_effect=0.5,
+                        reason="Test passed.",
+                    )
+                ],
+            )
+        ],
+    )
+
+    markdown = render_validation_markdown(validation)
+
+    assert "# Claim Validation Report" in markdown
+    assert "sample_claim" in markdown
+    assert "supported" in markdown

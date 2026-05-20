@@ -4,11 +4,16 @@ from mi.core.schema import (
     ActivationRef,
     BehaviorSpec,
     Claim,
+    ClaimSpec,
+    ClaimTestSpec,
+    ControlSummary,
     Evidence,
     FeatureRef,
     Intervention,
     LocalizationArtifact,
     LocalizationCandidate,
+    ValidationArtifact,
+    ValidationResult,
 )
 
 
@@ -75,6 +80,14 @@ def test_localization_artifact_round_trips_json() -> None:
         metric_after=1.0,
         effect=1.0,
         rank=1,
+        controls=["random"],
+        control_summary=ControlSummary(
+            control_mean=0.1,
+            control_max=0.2,
+            control_count=2,
+            specificity_passed=True,
+            control_effects={"random": [0.1, 0.2]},
+        ),
     )
     artifact = LocalizationArtifact(
         id="run-localize",
@@ -84,3 +97,23 @@ def test_localization_artifact_round_trips_json() -> None:
     )
 
     assert LocalizationArtifact.model_validate_json(artifact.model_dump_json()) == artifact
+
+
+def test_validation_artifact_round_trips_json() -> None:
+    behavior = BehaviorSpec(model="gpt2-small", prompt="Hello", target_text=" world")
+    claim = ClaimSpec(
+        id="claim_1",
+        text="A component supports the target token.",
+        behavior=behavior,
+        target=ActivationRef(layer=0, position=2, stream="resid_post"),
+        tests=[ClaimTestSpec(method="zero_ablation", min_effect=0.5)],
+    )
+    result = ValidationResult(claim_id=claim.id, verdict="untested")
+    artifact = ValidationArtifact(
+        id="validation",
+        backend="transformer-lens",
+        claims=[claim],
+        results=[result],
+    )
+
+    assert ValidationArtifact.model_validate_json(artifact.model_dump_json()) == artifact

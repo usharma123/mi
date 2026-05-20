@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mi.core.schema import LocalizationArtifact, TraceArtifact
+from mi.core.schema import LocalizationArtifact, TraceArtifact, ValidationArtifact
 from mi.methods.direct_logit_attribution import top_direct_attributions
 
 
@@ -173,9 +173,16 @@ def render_localization_markdown(localization: LocalizationArtifact) -> str:
     )
     if localization.candidates:
         for item in localization.candidates:
+            control = item.control_summary
+            effect = _float(item.effect)
+            if control and control.control_count:
+                effect = (
+                    f"{effect} "
+                    f"(ctrl max {_float(control.control_max)}, pass {control.specificity_passed})"
+                )
             lines.append(
                 f"| {item.rank or ''} | {item.method} | {item.target.layer} | "
-                f"{item.target.stream} | {item.target.position} | {_float(item.effect)} | "
+                f"{item.target.stream} | {item.target.position} | {effect} | "
                 f"{_float(item.metric_before)} | {_float(item.metric_after)} |"
             )
     else:
@@ -194,5 +201,57 @@ def render_localization_markdown(localization: LocalizationArtifact) -> str:
     if localization.warnings:
         lines.extend(["", "## Warnings", ""])
         for warning in localization.warnings:
+            lines.append(f"- {warning}")
+    return "\n".join(lines) + "\n"
+
+
+def render_validation_markdown(validation: ValidationArtifact) -> str:
+    lines: list[str] = [
+        "# Claim Validation Report",
+        "",
+        f"- Backend: `{validation.backend}`",
+        f"- Claims: `{len(validation.claims)}`",
+        "",
+        "## Verdicts",
+        "",
+        "| Claim | Verdict | Tests |",
+        "|---|---|---:|",
+    ]
+    for result in validation.results:
+        lines.append(f"| `{result.claim_id}` | `{result.verdict}` | {len(result.tests)} |")
+
+    claim_by_id = {claim.id: claim for claim in validation.claims}
+    for result in validation.results:
+        claim = claim_by_id.get(result.claim_id)
+        lines.extend(
+            [
+                "",
+                f"## Claim `{result.claim_id}`",
+                "",
+                claim.text if claim else "",
+                "",
+                "| Method | Passed | Effect | Min Effect | Control Max | Max Control | Reason |",
+                "|---|---|---:|---:|---:|---:|---|",
+            ]
+        )
+        for test in result.tests:
+            lines.append(
+                f"| {test.method} | {test.passed} | {_float(test.effect)} | "
+                f"{_float(test.min_effect)} | {_float(test.control_max)} | "
+                f"{_float(test.max_control_effect)} | {_cell(test.reason)} |"
+            )
+
+    lines.extend(
+        [
+            "",
+            "## Caveats",
+            "",
+            "- Validation verdicts are thresholded summaries of available causal probes, not proofs.",
+            "- Weak baselines, ambiguous positions, or broad residual-stream interventions should be inspected before treating a claim as robust.",
+        ]
+    )
+    if validation.warnings:
+        lines.extend(["", "## Warnings", ""])
+        for warning in validation.warnings:
             lines.append(f"- {warning}")
     return "\n".join(lines) + "\n"

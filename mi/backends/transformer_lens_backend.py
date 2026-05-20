@@ -9,6 +9,7 @@ from mi.backends.base import BackendUnavailable
 from mi.core.schema import (
     ActivationSummary,
     BehaviorSpec,
+    ControlSummary,
     DirectLogitAttributionEntry,
     Evidence,
     LocalizationArtifact,
@@ -18,11 +19,13 @@ from mi.core.schema import (
     TopPrediction,
     TraceArtifact,
 )
+from mi.core.schema import ActivationRef
 from mi.methods.activation_capture import (
     activation_artifact_key,
     activation_ref_from_hook,
     should_capture_activation,
 )
+from mi.methods.localization import resolve_position
 
 
 class TransformerLensBackend:
@@ -130,11 +133,15 @@ class TransformerLensBackend:
         corrupt_prompt: str | None,
         methods: set[str],
         streams: set[str],
+        controls: set[str],
+        position: str,
+        seed: int,
         top_k: int,
     ) -> LocalizationArtifact:
         import torch
 
         model = self.model
+        rng = np.random.default_rng(seed)
         warnings: list[str] = []
         target_id: int | None = None
         target_token: str | None = behavior.target_token
@@ -162,18 +169,31 @@ class TransformerLensBackend:
             )
 
         clean_tokens = model.to_tokens(behavior.prompt)
+        clean_token_ids = [int(token_id) for token_id in clean_tokens[0].detach().cpu().tolist()]
+        clean_str_tokens = list(model.to_str_tokens(behavior.prompt))
         clean_logits, clean_cache = model.run_with_cache(clean_tokens)
         clean_last_logits = clean_logits[0, -1].detach()
         clean_probs = torch.softmax(clean_last_logits.float(), dim=-1)
         clean_target = self._target_metrics(clean_last_logits, clean_probs, target_id, target_token)
-        clean_position = int(clean_tokens.shape[1] - 1)
+        if clean_target is not None and (clean_target.rank > 10 or clean_target.probability < 0.05):
+            warnings.append(
+                "Target baseline is weak: "
+                f"rank={clean_target.rank}, probability={clean_target.probability:.6f}."
+            )
 
         corrupt_tokens = model.to_tokens(corrupt_prompt) if corrupt_prompt else None
+        corrupt_token_ids: list[int] | None = None
+        corrupt_str_tokens: list[str] | None = None
         corrupt_target = None
         corrupt_cache = None
         corrupt_baseline_logit = None
         corrupt_position = None
+        corrupt_last_logits = None
         if corrupt_tokens is not None:
+            corrupt_token_ids = [
+                int(token_id) for token_id in corrupt_tokens[0].detach().cpu().tolist()
+            ]
+            corrupt_str_tokens = list(model.to_str_tokens(corrupt_prompt))
             corrupt_logits, corrupt_cache = model.run_with_cache(corrupt_tokens)
             corrupt_last_logits = corrupt_logits[0, -1].detach()
             corrupt_probs = torch.softmax(corrupt_last_logits.float(), dim=-1)
@@ -181,16 +201,40 @@ class TransformerLensBackend:
                 corrupt_last_logits, corrupt_probs, target_id, target_token
             )
             corrupt_baseline_logit = float(corrupt_last_logits[target_id].item())
-            corrupt_position = int(corrupt_tokens.shape[1] - 1)
+            if len(clean_token_ids) != len(corrupt_token_ids):
+                warnings.append(
+                    "Clean and corrupt prompts have different token lengths; position alignment may be ambiguous."
+                )
+
+        try:
+            position_selection = resolve_position(
+                position,
+                clean_token_ids,
+                clean_str_tokens,
+                corrupt_token_ids=corrupt_token_ids,
+                corrupt_tokens=corrupt_str_tokens,
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid --position value: {exc}") from exc
+        warnings.extend(position_selection.warnings)
+        clean_position = position_selection.clean_position
+        corrupt_position = position_selection.corrupt_position
 
         candidates: list[LocalizationCandidate] = []
         evidence: list[Evidence] = []
+        control_effects_by_key: dict[tuple[str, str], dict[str, list[float]]] = {}
         selected_streams = streams or set(self.LOCALIZE_HOOKS)
         unknown_streams = selected_streams - set(self.LOCALIZE_HOOKS)
         if unknown_streams:
             warnings.append(f"Unsupported localization stream(s): {', '.join(sorted(unknown_streams))}.")
         selected_streams = selected_streams & set(self.LOCALIZE_HOOKS)
         baseline_logit = float(clean_last_logits[target_id].item())
+        wrong_target_id = self._top_token_id_excluding(clean_last_logits, {target_id})
+        wrong_corrupt_id = (
+            self._top_token_id_excluding(corrupt_last_logits, {target_id})
+            if corrupt_last_logits is not None
+            else None
+        )
 
         n_layers = int(getattr(model.cfg, "n_layers", 0))
         for layer in range(n_layers):
@@ -216,6 +260,36 @@ class TransformerLensBackend:
                         effect=float(effect),
                     )
                     candidates.append(candidate)
+                    control_key = ("zero_ablation", hook_name)
+                    control_effects_by_key.setdefault(control_key, {})
+                    if "wrong-target" in controls and wrong_target_id is not None:
+                        wrong_before = float(clean_last_logits[wrong_target_id].item())
+                        wrong_after = float(
+                            ablated_logits[0, -1, wrong_target_id].detach().item()
+                        )
+                        control_effects_by_key[control_key].setdefault(
+                            "wrong-target", []
+                        ).append(wrong_before - wrong_after)
+                    if (
+                        "wrong-corrupt" in controls
+                        and corrupt_tokens is not None
+                        and corrupt_baseline_logit is not None
+                        and corrupt_position is not None
+                    ):
+                        corrupt_ablated_logits = model.run_with_hooks(
+                            corrupt_tokens,
+                            fwd_hooks=[
+                                (hook_name, self._zero_position_hook(corrupt_position))
+                            ],
+                        )
+                        control_effects_by_key[control_key].setdefault(
+                            "wrong-corrupt", []
+                        ).append(
+                            corrupt_baseline_logit
+                            - float(
+                                corrupt_ablated_logits[0, -1, target_id].detach().item()
+                            )
+                        )
                     evidence.append(
                         Evidence(
                             id=f"ev_{len(evidence) + 1}",
@@ -259,6 +333,32 @@ class TransformerLensBackend:
                         effect=float(effect),
                     )
                     candidates.append(candidate)
+                    control_key = ("clean_to_corrupt_patch", hook_name)
+                    control_effects_by_key.setdefault(control_key, {})
+                    if (
+                        "wrong-target" in controls
+                        and wrong_target_id is not None
+                        and corrupt_last_logits is not None
+                    ):
+                        wrong_before = float(corrupt_last_logits[wrong_target_id].item())
+                        wrong_after = float(
+                            patched_logits[0, -1, wrong_target_id].detach().item()
+                        )
+                        control_effects_by_key[control_key].setdefault(
+                            "wrong-target", []
+                        ).append(wrong_after - wrong_before)
+                    if (
+                        "wrong-corrupt" in controls
+                        and wrong_corrupt_id is not None
+                        and corrupt_last_logits is not None
+                    ):
+                        wrong_before = float(corrupt_last_logits[wrong_corrupt_id].item())
+                        wrong_after = float(
+                            patched_logits[0, -1, wrong_corrupt_id].detach().item()
+                        )
+                        control_effects_by_key[control_key].setdefault(
+                            "wrong-corrupt", []
+                        ).append(wrong_after - wrong_before)
                     evidence.append(
                         Evidence(
                             id=f"ev_{len(evidence) + 1}",
@@ -273,7 +373,19 @@ class TransformerLensBackend:
 
         if "clean_to_corrupt_patch" in methods and corrupt_prompt is None:
             warnings.append("clean_to_corrupt_patch requested without --corrupt-prompt; skipped.")
+        if (
+            "clean_to_corrupt_patch" in methods
+            and corrupt_prompt is not None
+            and corrupt_position is None
+        ):
+            warnings.append("clean_to_corrupt_patch requested but no corrupt position was resolved; skipped.")
 
+        candidates = self._attach_control_summaries(
+            candidates,
+            controls=controls,
+            control_effects_by_key=control_effects_by_key,
+            rng=rng,
+        )
         ranked_candidates: list[LocalizationCandidate] = []
         for method in ("zero_ablation", "clean_to_corrupt_patch"):
             method_candidates = [
@@ -297,6 +409,75 @@ class TransformerLensBackend:
             evidence=evidence,
             warnings=warnings,
         )
+
+    def _attach_control_summaries(
+        self,
+        candidates: list[LocalizationCandidate],
+        *,
+        controls: set[str],
+        control_effects_by_key: dict[tuple[str, str], dict[str, list[float]]],
+        rng: np.random.Generator,
+    ) -> list[LocalizationCandidate]:
+        if not controls:
+            return candidates
+
+        updated: list[LocalizationCandidate] = []
+        for candidate in candidates:
+            control_effects = {
+                name: list(values)
+                for name, values in control_effects_by_key.get(
+                    (candidate.method, candidate.hook_name), {}
+                ).items()
+            }
+            if "same-layer" in controls:
+                same_layer = [
+                    other.effect
+                    for other in candidates
+                    if other.method == candidate.method
+                    and other.target.layer == candidate.target.layer
+                    and other.hook_name != candidate.hook_name
+                ]
+                if same_layer:
+                    control_effects["same-layer"] = same_layer
+            if "random" in controls:
+                random_pool = [
+                    other.effect
+                    for other in candidates
+                    if other.method == candidate.method and other.hook_name != candidate.hook_name
+                ]
+                if random_pool:
+                    sample_size = min(5, len(random_pool))
+                    indices = rng.choice(len(random_pool), size=sample_size, replace=False)
+                    control_effects["random"] = [random_pool[int(index)] for index in indices]
+
+            flat_effects = [
+                abs(effect)
+                for values in control_effects.values()
+                for effect in values
+            ]
+            summary = ControlSummary(
+                control_mean=float(np.mean(flat_effects)) if flat_effects else None,
+                control_max=float(np.max(flat_effects)) if flat_effects else None,
+                control_count=len(flat_effects),
+                specificity_passed=(
+                    abs(candidate.effect) > float(np.max(flat_effects))
+                    if flat_effects
+                    else None
+                ),
+                control_effects={
+                    name: [float(effect) for effect in values]
+                    for name, values in control_effects.items()
+                },
+            )
+            updated.append(
+                candidate.model_copy(
+                    update={
+                        "controls": sorted(controls),
+                        "control_summary": summary,
+                    }
+                )
+            )
+        return updated
 
     def _target_token_ids(self, target_text: str) -> list[int]:
         target_tokens = self.model.to_tokens(target_text, prepend_bos=False)
@@ -345,9 +526,19 @@ class TransformerLensBackend:
             rank=rank,
         )
 
-    def _localization_target(self, layer: int, position: int, stream: str) -> Any:
-        from mi.core.schema import ActivationRef
+    def _top_token_id_excluding(self, logits: Any, excluded: set[int]) -> int | None:
+        import torch
 
+        if logits is None:
+            return None
+        sorted_ids = torch.argsort(logits, descending=True)
+        for token_id in sorted_ids.tolist():
+            token_id = int(token_id)
+            if token_id not in excluded:
+                return token_id
+        return None
+
+    def _localization_target(self, layer: int, position: int, stream: str) -> ActivationRef:
         return ActivationRef(layer=layer, position=position, stream=stream)
 
     def _zero_position_hook(self, position: int):

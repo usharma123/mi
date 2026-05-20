@@ -7,6 +7,7 @@ from mi.cli.main import app
 from mi.core.schema import (
     ActivationSummary,
     BehaviorSpec,
+    ControlSummary,
     DirectLogitAttributionEntry,
     LocalizationArtifact,
     LocalizationCandidate,
@@ -69,6 +70,9 @@ class FakeBackend:
         corrupt_prompt: str | None,
         methods: set[str],
         streams: set[str],
+        controls: set[str],
+        position: str,
+        seed: int,
         top_k: int,
     ):
         behavior = behavior.model_copy(update={"target_token": " world"})
@@ -92,6 +96,16 @@ class FakeBackend:
                     metric_after=1.25,
                     effect=0.75,
                     rank=1,
+                    controls=sorted(controls),
+                    control_summary=ControlSummary(
+                        control_mean=0.1,
+                        control_max=0.2,
+                        control_count=2,
+                        specificity_passed=True,
+                        control_effects={"random": [0.1, 0.2]},
+                    )
+                    if controls
+                    else None,
                 )
             ][:top_k],
         )
@@ -186,6 +200,12 @@ def test_localize_command_writes_expected_artifacts(tmp_path, monkeypatch) -> No
             "Goodbye, there",
             "--methods",
             "zero-ablation,clean-to-corrupt-patch",
+            "--controls",
+            "random,same-layer",
+            "--position",
+            "final",
+            "--seed",
+            "0",
         ],
     )
 
@@ -194,3 +214,128 @@ def test_localize_command_writes_expected_artifacts(tmp_path, monkeypatch) -> No
     assert (run_path / "candidates.json").exists()
     assert (run_path / "evidence.jsonl").exists()
     assert (run_path / "localize.md").exists()
+
+
+def test_validate_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    claims_path = tmp_path / "claim.yml"
+    claims_path.write_text(
+        """
+id: hello_world
+text: Residual stream supports the world token.
+target:
+  layer: 0
+  position: 2
+  stream: resid_post
+tests:
+  - method: zero_ablation
+    min_effect: 0.5
+    max_control_effect: 0.3
+""",
+        encoding="utf-8",
+    )
+    trace_result = runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+    assert trace_result.exit_code == 0, trace_result.output
+
+    result = runner.invoke(
+        app,
+        [
+            "validate",
+            str(run_path),
+            "--claims",
+            str(claims_path),
+            "--controls",
+            "random",
+            "--seed",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (run_path / "claims.json").exists()
+    assert (run_path / "validation.json").exists()
+    assert (run_path / "evidence.jsonl").exists()
+    assert (run_path / "validate.md").exists()
+
+
+def test_localize_rejects_invalid_controls(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        ["localize", str(run_path), "--controls", "not-a-control"],
+    )
+
+    assert result.exit_code == 1
+    assert "Unknown control" in result.output
+
+
+def test_validate_rejects_invalid_thresholds(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    claims_path = tmp_path / "claim.yml"
+    claims_path.write_text(
+        """
+id: bad_threshold
+text: Bad threshold.
+target:
+  layer: 0
+  position: 2
+  stream: resid_post
+tests:
+  - method: zero_ablation
+    min_effect: -1
+""",
+        encoding="utf-8",
+    )
+    runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+
+    result = runner.invoke(app, ["validate", str(run_path), "--claims", str(claims_path)])
+
+    assert result.exit_code == 1
+    assert "greater than or equal to 0" in result.output

@@ -72,6 +72,14 @@ class Claim(MIModel):
     verdict: Literal["supported", "weak", "contradicted", "untested"] = "untested"
 
 
+class ControlSummary(MIModel):
+    control_mean: float | None = None
+    control_max: float | None = None
+    control_count: int = 0
+    specificity_passed: bool | None = None
+    control_effects: dict[str, list[float]] = Field(default_factory=dict)
+
+
 class TopPrediction(MIModel):
     token_id: int
     token: str
@@ -114,6 +122,7 @@ class LocalizationCandidate(MIModel):
     effect: float
     rank: int | None = None
     controls: list[str] = Field(default_factory=list)
+    control_summary: ControlSummary | None = None
 
 
 class ActivationSummary(MIModel):
@@ -150,6 +159,52 @@ class LocalizationArtifact(MIModel):
     target: TargetMetrics | None = None
     corrupt_target: TargetMetrics | None = None
     candidates: list[LocalizationCandidate] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ClaimTestSpec(MIModel):
+    method: Literal["zero_ablation", "clean_to_corrupt_patch"]
+    min_effect: float = Field(default=0.0, ge=0)
+    max_control_effect: float | None = Field(default=None, ge=0)
+
+
+class ClaimSpec(MIModel):
+    id: str
+    text: str
+    target: ActivationRef
+    behavior: BehaviorSpec | None = None
+    hook_name: str | None = None
+    corrupt_prompt: str | None = None
+    tests: list[ClaimTestSpec] = Field(default_factory=list)
+
+
+class ClaimTestResult(MIModel):
+    method: str
+    target: ActivationRef
+    passed: bool
+    effect: float | None = None
+    min_effect: float | None = None
+    control_max: float | None = None
+    max_control_effect: float | None = None
+    evidence_id: str | None = None
+    reason: str
+
+
+class ValidationResult(MIModel):
+    claim_id: str
+    verdict: Literal["supported", "weak", "contradicted", "untested"]
+    tests: list[ClaimTestResult] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class ValidationArtifact(MIModel):
+    id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    backend: str
+    claims: list[ClaimSpec] = Field(default_factory=list)
+    results: list[ValidationResult] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     artifact_refs: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

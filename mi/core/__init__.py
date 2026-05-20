@@ -5,6 +5,10 @@ from mi.core.schema import (
     ActivationSummary,
     BehaviorSpec,
     Claim,
+    ClaimSpec,
+    ClaimTestResult,
+    ClaimTestSpec,
+    ControlSummary,
     DirectLogitAttributionEntry,
     Evidence,
     FeatureRef,
@@ -16,6 +20,8 @@ from mi.core.schema import (
     TargetMetrics,
     TopPrediction,
     TraceArtifact,
+    ValidationArtifact,
+    ValidationResult,
 )
 
 __all__ = [
@@ -23,6 +29,10 @@ __all__ = [
     "ActivationSummary",
     "BehaviorSpec",
     "Claim",
+    "ClaimSpec",
+    "ClaimTestResult",
+    "ClaimTestSpec",
+    "ControlSummary",
     "DirectLogitAttributionEntry",
     "Evidence",
     "FeatureRef",
@@ -34,4 +44,6 @@ __all__ = [
     "TargetMetrics",
     "TopPrediction",
     "TraceArtifact",
+    "ValidationArtifact",
+    "ValidationResult",
 ]
