@@ -44,8 +44,10 @@ mi localize runs/france \
   --seed 0
 mi validate runs/france \
   --claims examples/claims/france_paris.yml \
+  --variants variants.jsonl \
   --controls random,same-layer,wrong-target \
   --seed 0
+mi fuzz examples/families/capital_cities.yml --out variants.jsonl
 mi report runs/france --format md,json
 ```
 
@@ -74,6 +76,7 @@ runs/france/
 runs/france/
   claims.json
   validation.json
+  scores.json
   evidence.jsonl
   validate.md
 ```

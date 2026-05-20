@@ -1,0 +1,11 @@
+family: capital_cities
+templates:
+  - "The capital city of {country} is called"
+  - "{country}'s capital city is called"
+variables:
+  country:
+    - France
+    - Germany
+target_template: " Paris"
+controls:
+  wrong_country_swaps: true

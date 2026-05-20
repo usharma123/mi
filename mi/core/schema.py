@@ -247,6 +247,20 @@ class ValidationArtifact(MIModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PromptVariant(MIModel):
+    id: str
+    prompt: str
+    target_text: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScoreArtifact(MIModel):
+    id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    scores: dict[str, dict[str, float | None]] = Field(default_factory=dict)
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
+
+
 class RunManifest(MIModel):
     run_id: str
     created_at: str = Field(default_factory=utc_now_iso)

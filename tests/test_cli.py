@@ -269,6 +269,7 @@ tests:
     assert result.exit_code == 0, result.output
     assert (run_path / "claims.json").exists()
     assert (run_path / "validation.json").exists()
+    assert (run_path / "scores.json").exists()
     assert (run_path / "evidence.jsonl").exists()
     assert (run_path / "validate.md").exists()
 
@@ -394,3 +395,28 @@ def test_graph_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
     assert (run_path / "graph.json").exists()
     assert (run_path / "graph.graphml").exists()
     assert (run_path / "graph.md").exists()
+
+
+def test_fuzz_command_writes_variants(tmp_path) -> None:
+    runner = CliRunner()
+    family_path = tmp_path / "family.yml"
+    out = tmp_path / "variants.jsonl"
+    family_path.write_text(
+        """
+family: test
+templates:
+  - "Hello {name}"
+variables:
+  name:
+    - Ada
+    - Grace
+target_template: " world"
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["fuzz", str(family_path), "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    assert len(out.read_text(encoding="utf-8").splitlines()) == 2

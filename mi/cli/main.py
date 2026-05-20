@@ -9,6 +9,8 @@ import typer
 from mi import __version__
 from mi.backends import get_backend
 from mi.core.artifact_store import ArtifactStore, default_run_dir
+from mi.core.cts import score_validation
+from mi.core.fuzz import generate_variants, load_prompt_family, load_variants_jsonl, write_variants_jsonl
 from mi.core.schema import (
     BehaviorSpec,
     FeatureArtifact,
@@ -306,6 +308,10 @@ def validate_command(
             help="Comma-separated controls: random,same-layer,wrong-target,wrong-corrupt.",
         ),
     ] = "",
+    variants_path: Annotated[
+        Path | None,
+        typer.Option("--variants", help="Optional variants JSONL file for robustness metadata."),
+    ] = None,
     position: Annotated[
         str,
         typer.Option("--position", help="Position spec for rerun localization."),
@@ -327,6 +333,7 @@ def validate_command(
     try:
         claims = load_claim_specs(claims_path)
         control_set = parse_controls(controls)
+        variants = load_variants_jsonl(variants_path) if variants_path else []
     except Exception as exc:
         typer.secho(f"validate failed: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
@@ -390,6 +397,7 @@ def validate_command(
     artifact_refs = {
         "claims": "claims.json",
         "validation": "validation.json",
+        "scores": "scores.json",
         "evidence": "evidence.jsonl",
         "report_md": "validate.md",
     }
@@ -402,14 +410,35 @@ def validate_command(
         artifact_refs=artifact_refs,
         warnings=warnings,
     )
+    scores = score_validation(validation)
+    if variants:
+        validation.warnings.append(
+            f"Loaded {len(variants)} prompt variants; full rerun pass-rate validation is scheduled for backend-specific suites."
+        )
     store.write_json("claims.json", [claim.model_dump(mode="json") for claim in claims])
     store.write_json("validation.json", validation)
+    store.write_json("scores.json", scores)
     evidence_lines = "\n".join(
         evidence.model_dump_json() for evidence in validation.evidence
     )
     store.write_text("evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
     store.write_text("validate.md", render_validation_markdown(validation))
     typer.echo(f"Wrote validation artifacts to {store.root}")
+
+
+@app.command("fuzz")
+def fuzz_command(
+    family_path: Annotated[Path, typer.Argument(help="Prompt-family YAML file.")],
+    out: Annotated[Path, typer.Option("--out", help="Output variants JSONL path.")],
+) -> None:
+    try:
+        family = load_prompt_family(family_path)
+        variants = generate_variants(family)
+        write_variants_jsonl(out, variants)
+    except Exception as exc:
+        typer.secho(f"fuzz failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote {len(variants)} variants to {out}")
 
 
 def _find_candidate_in_localizations(localizations, claim, test):
