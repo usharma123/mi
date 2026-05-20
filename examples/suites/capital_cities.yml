@@ -1,0 +1,6 @@
+suite: capital_cities
+prompts:
+  - prompt: "The capital city of France is called"
+    target_text: " Paris"
+  - prompt: "The capital city of Germany is called"
+    target_text: " Berlin"

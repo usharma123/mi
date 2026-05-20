@@ -11,6 +11,7 @@ from mi.backends import get_backend
 from mi.core.artifact_store import ArtifactStore, default_run_dir
 from mi.core.circuit_tracer import import_circuit_tracer_graph
 from mi.core.cts import score_validation
+from mi.core.diff import diff_traces
 from mi.core.fuzz import generate_variants, load_prompt_family, load_variants_jsonl, write_variants_jsonl
 from mi.core.schema import (
     BehaviorSpec,
@@ -27,6 +28,7 @@ from mi.methods.features import build_raw_activation_features
 from mi.methods.localization import parse_controls
 from mi.report import (
     render_features_markdown,
+    render_diff_markdown,
     render_graph_markdown,
     render_json_report,
     render_localization_markdown,
@@ -595,6 +597,44 @@ def graph_command(
     store.write_text("graph.graphml", graph_to_graphml(graph))
     store.write_text("graph.md", render_graph_markdown(graph))
     typer.echo(f"Wrote graph artifacts to {store.root}")
+
+
+@app.command("diff")
+def diff_command(
+    run_a: Annotated[
+        Path | None,
+        typer.Option("--run-a", help="Existing run directory for model/checkpoint A."),
+    ] = None,
+    run_b: Annotated[
+        Path | None,
+        typer.Option("--run-b", help="Existing run directory for model/checkpoint B."),
+    ] = None,
+    model_a: Annotated[str | None, typer.Option("--model-a", help="Model A label.")] = None,
+    model_b: Annotated[str | None, typer.Option("--model-b", help="Model B label.")] = None,
+    suite: Annotated[Path | None, typer.Option("--suite", help="Prompt suite path for metadata.")] = None,
+    out: Annotated[Path, typer.Option("--out", help="Output diff directory.")] = Path("runs/diff"),
+) -> None:
+    if run_a is None or run_b is None:
+        if model_a and model_b:
+            typer.secho(
+                "Direct model diff execution is planned after backend batch tracing; pass --run-a and --run-b for v0.8.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        typer.secho("diff requires --run-a and --run-b in v0.8.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    _, trace_a = _load_trace(run_a)
+    _, trace_b = _load_trace(run_b)
+    store = ArtifactStore.create(out)
+    diff = diff_traces(store.run_id, trace_a, trace_b)
+    if suite is not None:
+        diff.warnings.append(f"Suite metadata recorded: {suite}")
+    artifact_refs = {"diff": "diff.json", "report_md": "diff.md"}
+    diff = diff.model_copy(update={"artifact_refs": artifact_refs})
+    store.write_json("diff.json", diff)
+    store.write_text("diff.md", render_diff_markdown(diff))
+    typer.echo(f"Wrote diff artifacts to {store.root}")
 
 
 @app.command("report")

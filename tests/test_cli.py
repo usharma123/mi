@@ -463,3 +463,33 @@ def test_backends_command_lists_capabilities() -> None:
     assert result.exit_code == 0, result.output
     assert "transformer-lens" in result.output
     assert "circuit-tracer" in result.output
+
+
+def test_diff_command_writes_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_a = tmp_path / "a"
+    run_b = tmp_path / "b"
+    out = tmp_path / "diff"
+    for run_path, model in ((run_a, "fake-a"), (run_b, "fake-b")):
+        result = runner.invoke(
+            app,
+            [
+                "trace",
+                "--model",
+                model,
+                "--prompt",
+                "Hello, there",
+                "--target",
+                " world",
+                "--out",
+                str(run_path),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    result = runner.invoke(app, ["diff", "--run-a", str(run_a), "--run-b", str(run_b), "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert (out / "diff.json").exists()
+    assert (out / "diff.md").exists()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mi.core.schema import FeatureArtifact, GraphArtifact, LocalizationArtifact, TraceArtifact, ValidationArtifact
+from mi.core.schema import DiffArtifact, FeatureArtifact, GraphArtifact, LocalizationArtifact, TraceArtifact, ValidationArtifact
 from mi.methods.direct_logit_attribution import top_direct_attributions
 
 
@@ -319,4 +319,26 @@ def render_graph_markdown(graph: GraphArtifact) -> str:
     if len(graph.edges) > 100:
         lines.append(f"| ... | {len(graph.edges) - 100} more edges |  |  |")
     lines.extend(["", "## Caveats", "", "- Graph edges carry evidence metadata; they are not complete circuit proofs."])
+    return "\n".join(lines) + "\n"
+
+
+def render_diff_markdown(diff: DiffArtifact) -> str:
+    lines = [
+        "# Model Diff Report",
+        "",
+        f"- Model A: `{diff.model_a}`",
+        f"- Model B: `{diff.model_b}`",
+        f"- Prompts: `{diff.prompt_count}`",
+        "",
+        "## Output Deltas",
+        "",
+        "| Prompt | A Top | B Top | Target Logit Delta | Target Rank Delta |",
+        "|---|---|---|---:|---:|",
+    ]
+    for item in diff.output_deltas:
+        lines.append(
+            f"| {_cell(item.get('prompt'))} | `{_cell(item.get('model_a_top'))}` | "
+            f"`{_cell(item.get('model_b_top'))}` | {_float(item.get('target_logit_delta'))} | "
+            f"{item.get('target_rank_delta') if item.get('target_rank_delta') is not None else ''} |"
+        )
     return "\n".join(lines) + "\n"

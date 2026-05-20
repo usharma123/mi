@@ -187,6 +187,19 @@ class GraphArtifact(MIModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class DiffArtifact(MIModel):
+    id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    model_a: str
+    model_b: str
+    prompt_count: int = 0
+    output_deltas: list[dict[str, Any]] = Field(default_factory=list)
+    feature_deltas: list[dict[str, Any]] = Field(default_factory=list)
+    localization_deltas: list[dict[str, Any]] = Field(default_factory=list)
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class LocalizationArtifact(MIModel):
     id: str
     created_at: str = Field(default_factory=utc_now_iso)
