@@ -35,6 +35,7 @@ mi inspect runs/france --view logit-lens
 mi inspect runs/france --view activations
 mi features runs/france --dictionary saelens --top-k 50
 mi graph runs/france --method meir --prune-threshold 0.03
+mi graph runs/france --backend circuit-tracer --import circuit_tracer_graph.json
 mi localize runs/france --methods zero-ablation --top-k 20
 mi localize runs/france \
   --corrupt-prompt "The capital of Germany is" \

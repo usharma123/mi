@@ -397,6 +397,39 @@ def test_graph_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
     assert (run_path / "graph.md").exists()
 
 
+def test_graph_circuit_tracer_import(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    import_path = tmp_path / "ct.json"
+    import_path.write_text(
+        '{"nodes":[{"id":"f1","kind":"transcoder_feature"}],"edges":[{"source":"f1","target":"logit","weight":1.0}]}',
+        encoding="utf-8",
+    )
+    runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        ["graph", str(run_path), "--backend", "circuit-tracer", "--import", str(import_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (run_path / "graph.json").exists()
+
+
 def test_fuzz_command_writes_variants(tmp_path) -> None:
     runner = CliRunner()
     family_path = tmp_path / "family.yml"

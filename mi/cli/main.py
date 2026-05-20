@@ -9,6 +9,7 @@ import typer
 from mi import __version__
 from mi.backends import get_backend
 from mi.core.artifact_store import ArtifactStore, default_run_dir
+from mi.core.circuit_tracer import import_circuit_tracer_graph
 from mi.core.cts import score_validation
 from mi.core.fuzz import generate_variants, load_prompt_family, load_variants_jsonl, write_variants_jsonl
 from mi.core.schema import (
@@ -529,6 +530,10 @@ def graph_command(
         str | None,
         typer.Option("--backend", help="Graph backend: meir or circuit-tracer."),
     ] = None,
+    import_path: Annotated[
+        Path | None,
+        typer.Option("--import", help="Import path for circuit-tracer JSON graphs."),
+    ] = None,
     prune_threshold: Annotated[
         float,
         typer.Option("--prune-threshold", help="Drop edges/nodes below this absolute effect."),
@@ -537,33 +542,39 @@ def graph_command(
     store, trace = _load_trace(run_path)
     selected = (backend or method).lower().replace("_", "-")
     if selected == "circuit-tracer":
-        typer.secho(
-            "circuit-tracer graph import is planned for v0.6; use --method meir for v0.4.",
-            fg=typer.colors.RED,
-            err=True,
+        if import_path is None:
+            typer.secho(
+                "circuit-tracer backend requires --import path/to/graph.json.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        graph = import_circuit_tracer_graph(
+            run_id=f"{store.run_id}-circuit-tracer-graph",
+            path=import_path,
+            behavior=trace.behavior,
         )
-        raise typer.Exit(code=1)
-    if selected != "meir":
+    elif selected != "meir":
         typer.secho(f"Unknown graph method/backend: {selected}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
-
-    localization = (
-        store.read_model("localization.json", LocalizationArtifact)
-        if store.path("localization.json").exists()
-        else None
-    )
-    features = (
-        store.read_model("features.json", FeatureArtifact)
-        if store.path("features.json").exists()
-        else None
-    )
-    graph = build_meir_graph(
-        run_id=f"{store.run_id}-graph",
-        trace=trace,
-        localization=localization,
-        features=features,
-        prune_threshold=prune_threshold,
-    )
+    else:
+        localization = (
+            store.read_model("localization.json", LocalizationArtifact)
+            if store.path("localization.json").exists()
+            else None
+        )
+        features = (
+            store.read_model("features.json", FeatureArtifact)
+            if store.path("features.json").exists()
+            else None
+        )
+        graph = build_meir_graph(
+            run_id=f"{store.run_id}-graph",
+            trace=trace,
+            localization=localization,
+            features=features,
+            prune_threshold=prune_threshold,
+        )
     artifact_refs = {
         "graph": "graph.json",
         "graphml": "graph.graphml",
