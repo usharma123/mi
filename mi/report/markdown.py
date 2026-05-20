@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mi.core.schema import LocalizationArtifact, TraceArtifact, ValidationArtifact
+from mi.core.schema import FeatureArtifact, LocalizationArtifact, TraceArtifact, ValidationArtifact
 from mi.methods.direct_logit_attribution import top_direct_attributions
 
 
@@ -253,5 +253,46 @@ def render_validation_markdown(validation: ValidationArtifact) -> str:
     if validation.warnings:
         lines.extend(["", "## Warnings", ""])
         for warning in validation.warnings:
+            lines.append(f"- {warning}")
+    return "\n".join(lines) + "\n"
+
+
+def render_features_markdown(features: FeatureArtifact) -> str:
+    lines = [
+        "# Feature Report",
+        "",
+        "## Behavior",
+        "",
+        f"- Model: `{features.behavior.model}`",
+        f"- Prompt: `{features.behavior.prompt}`",
+        f"- Target text: `{features.behavior.target_text or ''}`",
+        f"- Dictionary: `{features.dictionary_id}`",
+        f"- Source: `{features.source}`",
+        "",
+        "## Top Features",
+        "",
+        "| Rank | Feature | Layer | Activation | Label Metadata | Evidence |",
+        "|---:|---|---:|---:|---|---|",
+    ]
+    for rank, item in enumerate(features.features, start=1):
+        label = item.feature.label or ""
+        lines.append(
+            f"| {rank} | `{item.feature.feature_id}` | {item.feature.layer} | "
+            f"{_float(item.activation_value)} | {_cell(label)} | `{','.join(item.evidence_ids)}` |"
+        )
+    if not features.features:
+        lines.append("|  | No features found |  |  |  |  |")
+    lines.extend(
+        [
+            "",
+            "## Caveats",
+            "",
+            "- Feature labels and examples are metadata only; causal claims require intervention evidence.",
+            "- Raw activation features are useful for orientation but are not sparse dictionary features.",
+        ]
+    )
+    if features.warnings:
+        lines.extend(["", "## Warnings", ""])
+        for warning in features.warnings:
             lines.append(f"- {warning}")
     return "\n".join(lines) + "\n"

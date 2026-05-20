@@ -46,6 +46,18 @@ class FeatureRef(MIModel):
     )
 
 
+class FeatureCandidate(MIModel):
+    feature: FeatureRef
+    activation_ref: ActivationRef | None = None
+    activation_value: float
+    dictionary_reconstruction_error: float | None = None
+    positive_logits: list[TopPrediction] = Field(default_factory=list)
+    negative_logits: list[TopPrediction] = Field(default_factory=list)
+    ablation_effect: float | None = None
+    steering_effect: float | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class Intervention(MIModel):
     kind: Literal["zero", "mean_ablate", "patch", "scale", "set"]
     target: ActivationRef | FeatureRef
@@ -145,6 +157,19 @@ class TraceArtifact(MIModel):
     logit_lens: list[LogitLensEntry] = Field(default_factory=list)
     direct_logit_attribution: list[DirectLogitAttributionEntry] = Field(default_factory=list)
     activation_inventory: list[ActivationSummary] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FeatureArtifact(MIModel):
+    id: str
+    created_at: str = Field(default_factory=utc_now_iso)
+    backend: str
+    behavior: BehaviorSpec
+    dictionary_id: str
+    source: Literal["saelens", "neuronpedia", "raw_activation", "custom"] = "raw_activation"
+    features: list[FeatureCandidate] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     artifact_refs: dict[str, str] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

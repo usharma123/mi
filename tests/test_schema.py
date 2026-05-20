@@ -9,6 +9,8 @@ from mi.core.schema import (
     ControlSummary,
     Evidence,
     FeatureRef,
+    FeatureArtifact,
+    FeatureCandidate,
     Intervention,
     LocalizationArtifact,
     LocalizationCandidate,
@@ -117,3 +119,26 @@ def test_validation_artifact_round_trips_json() -> None:
     )
 
     assert ValidationArtifact.model_validate_json(artifact.model_dump_json()) == artifact
+
+
+def test_feature_artifact_round_trips_json() -> None:
+    behavior = BehaviorSpec(model="fake", prompt="hello")
+    feature = FeatureCandidate(
+        feature=FeatureRef(
+            dictionary_id="raw/fake",
+            layer=0,
+            feature_id=1,
+            source="custom_direction",
+            label="metadata label",
+        ),
+        activation_value=1.25,
+    )
+    artifact = FeatureArtifact(
+        id="features",
+        backend="transformer-lens",
+        behavior=behavior,
+        dictionary_id="raw/fake",
+        features=[feature],
+    )
+
+    assert FeatureArtifact.model_validate_json(artifact.model_dump_json()) == artifact

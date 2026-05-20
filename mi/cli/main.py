@@ -11,14 +11,17 @@ from mi.backends import get_backend
 from mi.core.artifact_store import ArtifactStore, default_run_dir
 from mi.core.schema import (
     BehaviorSpec,
+    FeatureArtifact,
     LocalizationArtifact,
     RunManifest,
     TraceArtifact,
     ValidationArtifact,
 )
 from mi.core.validation import evaluate_claim, find_candidate, load_claim_specs
+from mi.methods.features import build_raw_activation_features
 from mi.methods.localization import parse_controls
 from mi.report import (
+    render_features_markdown,
     render_json_report,
     render_localization_markdown,
     render_markdown,
@@ -412,6 +415,75 @@ def _find_candidate_in_localizations(localizations, claim, test):
         if candidate is not None:
             return candidate
     return None
+
+
+@app.command("features")
+def features_command(
+    run_path: Annotated[Path, typer.Argument(help="Run directory containing trace.json.")],
+    dictionary: Annotated[
+        str,
+        typer.Option("--dictionary", help="Dictionary source: saelens, raw-activation, or custom."),
+    ] = "raw-activation",
+    source: Annotated[
+        str | None,
+        typer.Option("--source", help="Optional metadata source such as neuronpedia."),
+    ] = None,
+    top_k: Annotated[
+        int,
+        typer.Option("--top-k", min=1, help="Number of features to keep."),
+    ] = 50,
+    layer: Annotated[
+        int | None,
+        typer.Option("--layer", help="Optional layer filter."),
+    ] = None,
+    stream: Annotated[
+        str | None,
+        typer.Option("--stream", help="Optional stream filter such as resid_post or mlp_out."),
+    ] = None,
+) -> None:
+    store, trace = _load_trace(run_path)
+    normalized = dictionary.strip().lower().replace("_", "-")
+    source_name = "raw_activation" if normalized in {"raw", "raw-activation"} else normalized
+    dictionary_id = normalized
+    if normalized == "saelens":
+        dictionary_id = f"saelens/{trace.behavior.model}"
+    elif normalized in {"raw", "raw-activation"}:
+        dictionary_id = f"raw-activation/{trace.behavior.model}"
+    elif normalized not in {"custom", "neuronpedia"}:
+        typer.secho(f"Unknown dictionary: {dictionary}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    if source and source.lower() == "neuronpedia":
+        dictionary_id = f"{dictionary_id}+neuronpedia"
+
+    try:
+        feature_artifact = build_raw_activation_features(
+            run_id=f"{store.run_id}-features",
+            backend=trace.backend,
+            behavior=trace.behavior,
+            activation_path=store.path("activations.npz"),
+            dictionary_id=dictionary_id,
+            source=source_name,
+            top_k=top_k,
+            layer=layer,
+            stream=stream,
+        )
+    except Exception as exc:
+        typer.secho(f"features failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    artifact_refs = {
+        "features": "features.json",
+        "evidence": "feature_evidence.jsonl",
+        "report_md": "features.md",
+    }
+    feature_artifact = feature_artifact.model_copy(update={"artifact_refs": artifact_refs})
+    store.write_json("features.json", feature_artifact)
+    evidence_lines = "\n".join(
+        evidence.model_dump_json() for evidence in feature_artifact.evidence
+    )
+    store.write_text("feature_evidence.jsonl", evidence_lines + ("\n" if evidence_lines else ""))
+    store.write_text("features.md", render_features_markdown(feature_artifact))
+    typer.echo(f"Wrote feature artifacts to {store.root}")
 
 
 @app.command("report")

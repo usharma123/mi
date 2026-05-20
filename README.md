@@ -33,6 +33,7 @@ mi trace --model gpt2-small --prompt "The capital of France is" --target " Paris
 mi inspect runs/france --view logits
 mi inspect runs/france --view logit-lens
 mi inspect runs/france --view activations
+mi features runs/france --dictionary saelens --top-k 50
 mi localize runs/france --methods zero-ablation --top-k 20
 mi localize runs/france \
   --corrupt-prompt "The capital of Germany is" \
@@ -55,6 +56,15 @@ runs/france/
   candidates.json
   evidence.jsonl
   localize.md
+```
+
+`mi features` writes:
+
+```text
+runs/france/
+  features.json
+  feature_evidence.jsonl
+  features.md
 ```
 
 `mi validate` writes:

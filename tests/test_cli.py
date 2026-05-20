@@ -339,3 +339,31 @@ tests:
 
     assert result.exit_code == 1
     assert "greater than or equal to 0" in result.output
+
+
+def test_features_command_writes_expected_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("mi.cli.main.get_backend", lambda name: FakeBackend)
+    runner = CliRunner()
+    run_path = tmp_path / "run"
+    trace_result = runner.invoke(
+        app,
+        [
+            "trace",
+            "--model",
+            "fake-model",
+            "--prompt",
+            "Hello, there",
+            "--target",
+            " world",
+            "--out",
+            str(run_path),
+        ],
+    )
+    assert trace_result.exit_code == 0, trace_result.output
+
+    result = runner.invoke(app, ["features", str(run_path), "--top-k", "2"])
+
+    assert result.exit_code == 0, result.output
+    assert (run_path / "features.json").exists()
+    assert (run_path / "feature_evidence.jsonl").exists()
+    assert (run_path / "features.md").exists()
