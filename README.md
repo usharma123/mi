@@ -49,6 +49,7 @@ mi validate runs/france \
   --controls random,same-layer,wrong-target \
   --seed 0
 mi fuzz examples/families/capital_cities.yml --out variants.jsonl
+mi backends
 mi report runs/france --format md,json
 ```
 
@@ -87,6 +88,8 @@ runs/france/
 ## Backends
 
 The implemented v0.1/v0.2 path is TransformerLens because it exposes internal activations and hook-based interventions. Ollama-style generation APIs are not enough for causal tracing by themselves: `mi` needs residual streams, component outputs, and intervention hooks. Models served by Ollama can become useful when their underlying weights are loaded through a PyTorch/Hugging Face/NNsight-style backend that exposes those tensors.
+
+Use `mi backends` to inspect which methods each backend supports. Unsupported backend-method combinations fail explicitly instead of producing partial evidence.
 
 ## Development
 

@@ -453,3 +453,13 @@ target_template: " world"
     assert result.exit_code == 0, result.output
     assert out.exists()
     assert len(out.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_backends_command_lists_capabilities() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["backends"])
+
+    assert result.exit_code == 0, result.output
+    assert "transformer-lens" in result.output
+    assert "circuit-tracer" in result.output

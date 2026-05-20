@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from mi.backends.base import NotImplementedTraceBackend
+from mi.backends.base import BackendCapabilityError, NotImplementedTraceBackend
 
 
 class HFHooksBackend(NotImplementedTraceBackend):
     name = "hf-hooks"
 
     def trace(self, *args, **kwargs):
-        raise NotImplementedError(
-            "The raw Hugging Face hooks backend is planned for a later release. "
-            "Use --backend transformer-lens in mi v0.1."
+        raise BackendCapabilityError(
+            "The raw Hugging Face hooks backend requires model-specific hook maps before "
+            "causal trace/localize can run. Use --backend transformer-lens for supported models."
         )
+
+    def capabilities(self) -> dict[str, bool]:
+        return {"trace": False, "localize": False, "features": False, "graph": False}

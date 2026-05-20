@@ -143,6 +143,16 @@ def trace_command(
     typer.echo(f"Wrote trace artifacts to {store.root}")
 
 
+@app.command("backends")
+def backends_command() -> None:
+    for name in ("transformer-lens", "nnsight", "hf-hooks", "circuit-tracer"):
+        factory = get_backend(name)
+        backend = factory("<model>", None)
+        caps = backend.capabilities() if hasattr(backend, "capabilities") else {}
+        rendered = ", ".join(f"{key}={value}" for key, value in sorted(caps.items()))
+        typer.echo(f"{name}: {rendered}")
+
+
 @app.command("inspect")
 def inspect_command(
     run_path: Annotated[Path, typer.Argument(help="Run directory containing trace.json.")],

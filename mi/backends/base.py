@@ -10,6 +10,10 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
+class BackendCapabilityError(RuntimeError):
+    pass
+
+
 class TraceBackend(Protocol):
     name: str
 
@@ -54,7 +58,7 @@ class NotImplementedTraceBackend:
         run_id: str,
         top_k: int,
     ) -> TraceArtifact:
-        raise NotImplementedError(f"{self.name} backend is not implemented in mi v0.1.")
+        raise BackendCapabilityError(f"{self.name} trace is not supported by this backend yet.")
 
     def localize(
         self,
@@ -69,4 +73,7 @@ class NotImplementedTraceBackend:
         seed: int,
         top_k: int,
     ) -> LocalizationArtifact:
-        raise NotImplementedError(f"{self.name} localization is not implemented yet.")
+        raise BackendCapabilityError(f"{self.name} localization is not supported by this backend yet.")
+
+    def capabilities(self) -> dict[str, bool]:
+        return {"trace": False, "localize": False, "features": False, "graph": False}

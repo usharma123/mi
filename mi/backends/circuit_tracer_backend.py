@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from mi.backends.base import NotImplementedTraceBackend
+from mi.backends.base import BackendCapabilityError, NotImplementedTraceBackend
 
 
 class CircuitTracerBackend(NotImplementedTraceBackend):
     name = "circuit-tracer"
 
     def trace(self, *args, **kwargs):
-        raise NotImplementedError(
+        raise BackendCapabilityError(
             "circuit-tracer is installed as a first-class dependency, but graph import "
-            "and validation are planned for mi v0.6. Use --backend transformer-lens in v0.1."
+            "is exposed through `mi graph --backend circuit-tracer --import`."
         )
+
+    def capabilities(self) -> dict[str, bool]:
+        return {"trace": False, "localize": False, "features": False, "graph": True}

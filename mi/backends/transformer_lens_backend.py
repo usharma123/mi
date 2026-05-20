@@ -41,6 +41,9 @@ class TransformerLensBackend:
         self.device = device
         self._model: Any | None = None
 
+    def capabilities(self) -> dict[str, bool]:
+        return {"trace": True, "localize": True, "features": True, "graph": True}
+
     @property
     def model(self) -> Any:
         if self._model is None:
